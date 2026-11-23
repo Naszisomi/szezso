@@ -8,4 +8,5 @@ Saját chart- és indikátoroldal tabletre (böngészőben fut, szerver nélkül
 
 ## Állapot
 
-1. lépés – kapcsolatteszt: `teszt/index.html`
+1. lépés – kapcsolatteszt: `teszt/index.html` (kész)
+2. lépés – alap chart: `index.html` (élő HYPE + BTC/ETH, idősíkok, magyar idő, számlafülek)
