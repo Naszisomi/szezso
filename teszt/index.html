@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>szezso – OKX kapcsolatteszt</title>
+<style>
+  :root { --ok:#2E7D32; --err:#C62828; --warn:#E65100; --mut:#666; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 16px; background:#fafafa; color:#111; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.sub { color: var(--mut); margin: 0 0 16px; }
+  section { background:#fff; border:1px solid #ddd; border-radius:10px; padding:14px; margin-bottom:14px; }
+  h2 { font-size: 17px; margin: 0 0 10px; }
+  button { font-size:16px; padding:12px 18px; border-radius:8px; border:1px solid #888; background:#fff; margin:4px 6px 4px 0; }
+  button.main { background:#111; color:#fff; border-color:#111; }
+  input, select { font-size:16px; padding:10px; border-radius:8px; border:1px solid #999; }
+  .ok { color: var(--ok); font-weight:600; }
+  .err { color: var(--err); font-weight:600; }
+  .warn { color: var(--warn); font-weight:600; }
+  .log { font-family: ui-monospace, Menlo, Consolas, monospace; font-size:13px; white-space:pre-wrap; background:#f3f3f3; border-radius:8px; padding:10px; max-height:260px; overflow:auto; }
+  table { border-collapse: collapse; width:100%; font-size:14px; }
+  th, td { border-bottom:1px solid #eee; padding:6px 8px; text-align:right; }
+  th:first-child, td:first-child { text-align:left; }
+  .live { font-size:34px; font-weight:700; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .tbl { overflow-x:auto; }
+</style>
+</head>
+<body>
+<h1>szezso – OKX kapcsolatteszt</h1>
+<p class="sub">1. lépés: kiderül, hogy a tablet böngészője eléri-e közvetlenül az OKX nyilvános adatait (kulcs nélkül), és melyik a pontos HYPE X-Perp azonosító.</p>
+
+<section>
+  <h2>1. Elérhetőség (melyik OKX-cím válaszol)</h2>
+  <button class="main" onclick="runAll()">Teszt indítása</button>
+  <div id="hosts"></div>
+</section>
+
+<section>
+  <h2>2. X-Perp termékek</h2>
+  <div id="insts">Még nincs adat – indítsd el a tesztet.</div>
+</section>
+
+<section>
+  <h2>3. Gyertyák (összevetéshez a TradingView-val)</h2>
+  <div class="row">
+    <label>Termék: <select id="instSel"></select></label>
+    <label>Idősík:
+      <select id="barSel">
+        <option>1m</option><option>5m</option><option selected>15m</option><option>1H</option><option>4H</option>
+      </select>
+    </label>
+    <input id="instManual" placeholder="vagy írd be kézzel (instId)" size="28">
+    <button onclick="loadCandles()">Gyertyák betöltése</button>
+  </div>
+  <div id="candleInfo"></div>
+  <div class="tbl"><table id="candles"></table></div>
+</section>
+
+<section>
+  <h2>4. Élő adatfolyam (WebSocket)</h2>
+  <button onclick="startWs()">Élő ár indítása</button>
+  <button onclick="stopWs()">Leállítás</button>
+  <div id="wsState"></div>
+  <div class="live" id="livePrice">–</div>
+  <div id="liveCandle"></div>
+</section>
+
+<section>
+  <h2>Napló (ezt küldd el képernyőképen, ha valami piros)</h2>
+  <div class="log" id="log"></div>
+</section>
+
+<script>
+// Lehetséges OKX címek: globális és európai (EEA). Az X-Perp európai termék.
+const HOSTS = [
+  { name: "Globális (www.okx.com)", rest: "https://www.okx.com", wsPub: "wss://ws.okx.com:8443/ws/v5/public", wsBiz: "wss://ws.okx.com:8443/ws/v5/business" },
+  { name: "Európai (eea.okx.com)",  rest: "https://eea.okx.com", wsPub: "wss://wseea.okx.com:8443/ws/v5/public", wsBiz: "wss://wseea.okx.com:8443/ws/v5/business" },
+  { name: "my.okx.com",             rest: "https://my.okx.com",  wsPub: "wss://wsaws.okx.com:8443/ws/v5/public", wsBiz: "wss://wsaws.okx.com:8443/ws/v5/business" },
+];
+let working = [];     // válaszoló címek
+let found = [];       // talált X-Perp termékek: {host, instId, instType, ctVal, ctValCcy, tickSz, expTime}
+let ws = null;
+
+const $ = id => document.getElementById(id);
+function log(msg, cls) {
+  const t = new Date().toLocaleTimeString("hu-HU");
+  const el = document.createElement("div");
+  if (cls) el.className = cls;
+  el.textContent = `[${t}] ${msg}`;
+  $("log").prepend(el);
+}
+function fmtTime(ms) {
+  return new Date(ms).toLocaleString("hu-HU", { timeZone: "Europe/Budapest", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" });
+}
+
+async function getJson(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const j = await r.json();
+  if (j.code !== "0") throw new Error("OKX hiba " + j.code + ": " + j.msg);
+  return j.data;
+}
+
+async function runAll() {
+  working = []; found = [];
+  $("hosts").innerHTML = ""; $("insts").textContent = "Keresés…";
+  for (const h of HOSTS) {
+    const line = document.createElement("div");
+    line.textContent = h.name + ": ellenőrzés…";
+    $("hosts").appendChild(line);
+    try {
+      const d = await getJson(h.rest + "/api/v5/public/time");
+      line.innerHTML = `${h.name}: <span class="ok">elérhető ✓</span> (szerveridő ${fmtTime(+d[0].ts)})`;
+      working.push(h);
+      log(h.name + " elérhető", "ok");
+    } catch (e) {
+      const msg = String(e.message || e);
+      const cors = msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("Load failed");
+      line.innerHTML = `${h.name}: <span class="err">nem érhető el ✗</span> ${cors ? "(valószínűleg a böngésző tiltja – CORS – vagy nincs ilyen cím)" : msg}`;
+      log(h.name + " hiba: " + msg, "err");
+    }
+  }
+  if (!working.length) { $("insts").innerHTML = '<span class="err">Egyik cím sem válaszolt a böngészőből. Közvetítő (Cloudflare Worker) kell majd.</span>'; return; }
+  await findXPerps();
+}
+
+async function findXPerps() {
+  for (const h of working) {
+    for (const t of ["FUTURES", "SWAP"]) {
+      try {
+        const d = await getJson(`${h.rest}/api/v5/public/instruments?instType=${t}`);
+        const xs = d.filter(i => /XPERP/i.test(i.instId) || /X-?PERP/i.test(i.alias || "") );
+        log(`${h.name} ${t}: ${d.length} termék, ebből X-Perp: ${xs.length}`);
+        xs.forEach(i => found.push({ host: h, instId: i.instId, instType: t, ctVal: i.ctVal, ctValCcy: i.ctValCcy, tickSz: i.tickSz, expTime: i.expTime, state: i.state }));
+      } catch (e) { log(`${h.name} ${t}: ${e.message}`, "warn"); }
+    }
+  }
+  const pick = found.filter(f => /^(HYPE|BTC|ETH)-/.test(f.instId));
+  if (!found.length) {
+    $("insts").innerHTML = '<span class="warn">X-Perp terméket nem találtam a nyilvános listában. A 3. pontban kézzel is beírható az azonosító.</span>';
+  } else {
+    let html = `<p>Talált X-Perp termékek: ${found.length}. HYPE / BTC / ETH:</p><div class="tbl"><table><tr><th>instId</th><th>cím</th><th>típus</th><th>1 szerződés</th><th>tick</th><th>lejárat</th><th>állapot</th></tr>`;
+    for (const f of (pick.length ? pick : found)) {
+      html += `<tr><td><b>${f.instId}</b></td><td>${f.host.name}</td><td>${f.instType}</td><td>${f.ctVal} ${f.ctValCcy}</td><td>${f.tickSz}</td><td>${f.expTime ? fmtTime(+f.expTime) : "–"}</td><td>${f.state}</td></tr>`;
+    }
+    html += "</table></div>";
+    $("insts").innerHTML = html;
+  }
+  const sel = $("instSel"); sel.innerHTML = "";
+  for (const f of (pick.length ? pick : found)) {
+    const o = document.createElement("option");
+    o.value = JSON.stringify({ instId: f.instId, host: f.host.name });
+    o.textContent = f.instId + " (" + f.host.name + ")";
+    if (/^HYPE-/.test(f.instId)) o.selected = true;
+    sel.appendChild(o);
+  }
+}
+
+function currentInst() {
+  const manual = $("instManual").value.trim();
+  if (manual) return { instId: manual, host: (working[0] || HOSTS[0]) };
+  if (!$("instSel").value) return null;
+  const v = JSON.parse($("instSel").value);
+  return { instId: v.instId, host: HOSTS.find(h => h.name === v.host) };
+}
+
+async function loadCandles() {
+  const ci = currentInst();
+  if (!ci) { $("candleInfo").innerHTML = '<span class="warn">Előbb futtasd a tesztet, vagy írj be azonosítót.</span>'; return; }
+  const bar = $("barSel").value;
+  $("candleInfo").textContent = "Betöltés…";
+  try {
+    const d = await getJson(`${ci.host.rest}/api/v5/market/candles?instId=${encodeURIComponent(ci.instId)}&bar=${bar}&limit=20`);
+    // OKX sorrend: [ts, o, h, l, c, vol (szerződés), volCcy (coin), volCcyQuote (USD), confirm]
+    let html = "<tr><th>idő (magyar)</th><th>nyitó</th><th>csúcs</th><th>mély</th><th>záró</th><th>vol (szerz.)</th><th>vol (coin)</th><th>vol (USD)</th><th>lezárt</th></tr>";
+    for (const c of d) {
+      html += `<tr><td>${fmtTime(+c[0])}</td><td>${c[1]}</td><td>${c[2]}</td><td>${c[3]}</td><td>${c[4]}</td><td>${(+c[5]).toLocaleString("hu-HU")}</td><td>${(+c[6]).toLocaleString("hu-HU")}</td><td>${(+c[7]).toLocaleString("hu-HU")}</td><td>${c[8] === "1" ? "igen" : "fut"}</td></tr>`;
+    }
+    $("candles").innerHTML = html;
+    $("candleInfo").innerHTML = `<span class="ok">${ci.instId} – ${bar} – ${d.length} gyertya (${ci.host.name}) ✓</span> Vesd össze a TradingView-val az utolsó pár lezárt gyertyát (ár és volumen).`;
+    log(`Gyertyák OK: ${ci.instId} ${bar}`, "ok");
+  } catch (e) {
+    $("candleInfo").innerHTML = `<span class="err">Hiba: ${e.message}</span>`;
+    log("Gyertya hiba: " + e.message, "err");
+  }
+}
+
+function startWs() {
+  const ci = currentInst();
+  if (!ci) { $("wsState").innerHTML = '<span class="warn">Előbb válassz terméket.</span>'; return; }
+  stopWs();
+  const bar = $("barSel").value;
+  // gyertya-csatornák a "business" végponton vannak, a ticker a "public"-on
+  const wsUrl = ci.host.wsBiz;
+  $("wsState").textContent = "Kapcsolódás: " + wsUrl;
+  try { ws = new WebSocket(wsUrl); } catch (e) { $("wsState").innerHTML = `<span class="err">${e.message}</span>`; return; }
+  let ping = null;
+  ws.onopen = () => {
+    $("wsState").innerHTML = `<span class="ok">Kapcsolódva ✓</span> (${ci.instId}, ${bar} gyertya)`;
+    ws.send(JSON.stringify({ op: "subscribe", args: [{ channel: "candle" + bar, instId: ci.instId }] }));
+    ping = setInterval(() => { if (ws && ws.readyState === 1) ws.send("ping"); }, 25000);
+    log("WebSocket kapcsolódva: " + wsUrl, "ok");
+  };
+  ws.onmessage = ev => {
+    if (ev.data === "pong") return;
+    const m = JSON.parse(ev.data);
+    if (m.event === "error") { $("wsState").innerHTML = `<span class="err">Feliratkozási hiba: ${m.msg}</span>`; log("WS hiba: " + m.msg, "err"); return; }
+    if (m.event) { log("WS: " + m.event); return; }
+    if (m.data && m.data[0]) {
+      const c = m.data[0];
+      $("livePrice").textContent = c[4];
+      $("liveCandle").textContent = `${fmtTime(+c[0])}  ny ${c[1]}  cs ${c[2]}  m ${c[3]}  z ${c[4]}  vol ${c[5]}  – frissítve ${new Date().toLocaleTimeString("hu-HU")}`;
+    }
+  };
+  ws.onerror = () => { $("wsState").innerHTML = '<span class="err">WebSocket hiba ✗</span>'; log("WebSocket hiba", "err"); };
+  ws.onclose = () => { clearInterval(ping); log("WebSocket lezárva"); };
+}
+function stopWs() { if (ws) { try { ws.close(); } catch (e) {} ws = null; } }
+
+log("Oldal betöltve. Böngésző: " + navigator.userAgent);
+</script>
+</body>
+</html>
