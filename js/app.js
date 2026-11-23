@@ -4,7 +4,7 @@
 import { BARS, fetchLatest, fetchOlder, LiveFeed } from "./okx.js";
 import { loadCandles, saveCandles, merge, getPref, setPref } from "./store.js";
 import { SceneLayer } from "./draw.js";
-import { milana, MILANA_DEFAULTS } from "./ind/milana.js";
+import { milana, MILANA_DEFAULTS, milanaHistoryFrom } from "./ind/milana.js";
 
 // Rétegek ki-be kapcsolása (a részletes beállítások az 5. lépésben jönnek)
 const layers = { milana: getPref("layer.milana", true) };
@@ -67,7 +67,34 @@ class DataSet {
       this.emitReset();
       while (!this.dead && this.bars.length < 1000 && !this.noMoreOlder) await this.loadOlder(true);
       saveCandles(this.inst.instId, this.tf, this.bars);
+      await this.backfill();
     } catch (e) { setStatus("Adathiba: " + e.message, "err"); }
+  }
+  // Az indikátoroknak szükséges előzmény (pl. Milana heti nyitás) visszatöltése a háttérben,
+  // egyben, hogy a chart ne ugráljon. A letöltött adat a gyorsítótárba kerül.
+  async backfill() {
+    if (!layers.milana || !this.bars.length) return;
+    const need = milanaHistoryFrom(Date.now(), BARS[this.tf].sec);
+    if (!(this.bars[0].t > need)) return;
+    while (this.loadingOlder) await new Promise(r => setTimeout(r, 200));
+    this.loadingOlder = true;
+    const start = this.bars[0].t, before = this.bars.length;
+    let acc = this.bars;
+    try {
+      while (!this.dead && acc[0].t > need) {
+        const pct = Math.min(99, Math.round(100 * (start - acc[0].t) / (start - need)));
+        setStatus(`előzmény töltése (${this.inst.short} ${this.tf})… ${pct}%`);
+        const older = await fetchOlder(this.inst.instId, this.tf, acc[0].t);
+        if (!older.length) { this.noMoreOlder = true; break; }
+        acc = merge(older, acc);
+      }
+      if (this.dead) return;
+      this.bars = merge(acc, this.bars);   // közben érkezett élő gyertyák megtartása
+      this.emitReset(this.bars.length - before);
+      saveCandles(this.inst.instId, this.tf, this.bars);
+      setStatus("");
+    } catch (e) { setStatus("Előzmény hiba: " + e.message, "err"); }
+    finally { this.loadingOlder = false; }
   }
   compute() {
     const items = [];
@@ -260,7 +287,7 @@ function buildLayerButtons() {
     b.textContent = label; b.className = layers[k] ? "on" : "";
     b.onclick = () => {
       layers[k] = !layers[k]; setPref("layer." + k, layers[k]); buildLayerButtons();
-      for (const ds of hub.sets.values()) ds.emitReset();
+      for (const ds of hub.sets.values()) { ds.emitReset(); ds.backfill(); }
     };
     box.appendChild(b);
   }

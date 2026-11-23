@@ -4,7 +4,7 @@
 //    TNY 08:30, NYAM 09:30, TPM 14:30
 //  - minden nyitás után az első FVG (a nyitógyertyával kezdődő is számít)
 //  - az előző vonal / FVG a következő ugyanilyen nyitásnál ér véget
-//  - 30m-ig minden nyitás, 1h-n TDO + TWO, 4h-n TDO, napi charton semmi; 1h felett nincs felirat
+//  - 30m-ig minden nyitás, 1h-n TDO + TWO, 4h-n TDO (felirattal), napi charton semmi
 import { rgba } from "../draw.js";
 
 export const MILANA_DEFAULTS = {
@@ -21,7 +21,7 @@ export const MILANA_DEFAULTS = {
   bullCol: "#4CAF73", bearCol: "#C76464", transp: 80,
   fvgLabels: true, fvgLabelCol: "#8A8F94",
   style: "dashed", width: 1, ext: 5,
-  labels: true, labelMaxTf: 3600,
+  labels: true, labelMaxTf: 14400,
   keep: true, days: 30,
 };
 
@@ -75,6 +75,23 @@ function hitIndicesRaw(bars, barMs, o, fromMs) {
     y = nd.getUTCFullYear(); m = nd.getUTCMonth() + 1; d = nd.getUTCDate();
   }
   return out;
+}
+
+// Milyen régre kell visszamenni az adatnak, hogy minden bekapcsolt nyitás legutóbbi
+// előfordulása (és a gyertya előtte) benne legyen. ms-ben adja vissza (vagy Infinity).
+export function milanaHistoryFrom(nowMs, barSec, cfg = MILANA_DEFAULTS) {
+  let need = Infinity;
+  const today = nyDate(nowMs);
+  for (const o of cfg.opens) {
+    if (!o.on || barSec > o.maxTf || barSec >= 86400) continue;
+    for (let back = 0; back < 9; back++) {
+      const nd = new Date(Date.UTC(today.y, today.m - 1, today.d - back));
+      if (o.monday && nd.getUTCDay() !== 1) continue;
+      const target = nyToUtc(nd.getUTCFullYear(), nd.getUTCMonth() + 1, nd.getUTCDate(), o.hh, o.mm);
+      if (target <= nowMs) { need = Math.min(need, target - 3 * barSec * 1000); break; }
+    }
+  }
+  return need;
 }
 
 // Kiszámolja a Milana-rajzokat a gyertyákból. bars: [{t,o,h,l,c,done}], barSec: gyertyahossz.
