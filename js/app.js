@@ -3,6 +3,11 @@
 // és „HYPE·BTC·ETH” (a három termék egyszerre).
 import { BARS, fetchLatest, fetchOlder, LiveFeed } from "./okx.js";
 import { loadCandles, saveCandles, merge, getPref, setPref } from "./store.js";
+import { SceneLayer } from "./draw.js";
+import { milana, MILANA_DEFAULTS } from "./ind/milana.js";
+
+// Rétegek ki-be kapcsolása (a részletes beállítások az 5. lépésben jönnek)
+const layers = { milana: getPref("layer.milana", true) };
 
 const LWC = window.LightweightCharts;
 
@@ -46,7 +51,7 @@ function setStatus(msg, cls) {
 class DataSet {
   constructor(key, tf) {
     this.key = key; this.tf = tf; this.inst = INSTRUMENTS[key];
-    this.bars = []; this.panels = new Set();
+    this.bars = []; this.panels = new Set(); this.scene = { items: [] };
     this.loadingOlder = false; this.noMoreOlder = false; this.dead = false;
     this.ready = this.init();
   }
@@ -64,7 +69,12 @@ class DataSet {
       saveCandles(this.inst.instId, this.tf, this.bars);
     } catch (e) { setStatus("Adathiba: " + e.message, "err"); }
   }
-  emitReset(shift = 0) { for (const p of this.panels) p.reset(shift); }
+  compute() {
+    const items = [];
+    if (layers.milana) items.push(...milana(this.bars, BARS[this.tf].sec, MILANA_DEFAULTS).items);
+    this.scene = { items };
+  }
+  emitReset(shift = 0) { this.compute(); for (const p of this.panels) p.reset(shift); }
   async loadOlder(silent) {
     if (this.loadingOlder || this.noMoreOlder || !this.bars.length || this.dead) return;
     this.loadingOlder = true;
@@ -84,6 +94,7 @@ class DataSet {
     const last = this.bars[this.bars.length - 1];
     if (bar.t < last.t) return;
     if (bar.t === last.t) this.bars[this.bars.length - 1] = bar; else this.bars.push(bar);
+    this.compute();
     for (const p of this.panels) p.update(bar);
     if (bar.done) saveCandles(this.inst.instId, this.tf, this.bars);
   }
@@ -152,6 +163,8 @@ class ChartPanel {
       if (panes[1]) panes[1].setStretchFactor(0.18);
       if (panes[0]) panes[0].setStretchFactor(0.82);
     }
+    this.layer = new SceneLayer(() => this.ds ? this.ds.bars : [], () => this.ds ? this.ds.scene : null, () => BARS[hub.tf].sec);
+    this.candles.attachPrimitive(this.layer);
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(r => { if (r && r.from < 30 && this.ds) this.ds.loadOlder(); });
     this.titleEl = document.createElement("div");
     this.titleEl.className = "ctitle" + (small ? " small" : "");
@@ -173,11 +186,13 @@ class ChartPanel {
     if (this.volume) this.volume.setData(bars.map(b => ({ time: chartTime(b.t), value: b.v, color: (b.c >= b.o ? UP : DOWN) + "66" })));
     if (bars.length && this.first) { ts.scrollToRealTime(); this.first = false; }
     else if (r && shift) ts.setVisibleLogicalRange({ from: r.from + shift, to: r.to + shift });
+    this.layer.refresh();
     this.setTitle();
   }
   update(b) {
     this.candles.update({ time: chartTime(b.t), open: b.o, high: b.h, low: b.l, close: b.c });
     if (this.volume) this.volume.update({ time: chartTime(b.t), value: b.v, color: (b.c >= b.o ? UP : DOWN) + "66" });
+    this.layer.refresh();
     this.setTitle();
   }
   setTitle() {
@@ -237,6 +252,19 @@ function buildTfButtons() {
     box.appendChild(b);
   }
 }
+function buildLayerButtons() {
+  const box = document.getElementById("layers");
+  box.innerHTML = "";
+  for (const [k, label] of [["milana", "Milana"]]) {
+    const b = document.createElement("button");
+    b.textContent = label; b.className = layers[k] ? "on" : "";
+    b.onclick = () => {
+      layers[k] = !layers[k]; setPref("layer." + k, layers[k]); buildLayerButtons();
+      for (const ds of hub.sets.values()) ds.emitReset();
+    };
+    box.appendChild(b);
+  }
+}
 function buildTabs() {
   const box = document.getElementById("tabs");
   box.innerHTML = "";
@@ -250,6 +278,7 @@ function buildTabs() {
 
 window.addEventListener("DOMContentLoaded", () => {
   buildTfButtons();
+  buildLayerButtons();
   showTab(current);
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 });
