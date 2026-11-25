@@ -11,6 +11,9 @@ import { oscillators } from "./osc.js";
 import { gannEvents, gannTimeScore, GANN_YEARS } from "./gann.js";
 import { autoFib, gann, fibLayer } from "./fib.js";
 import { supertrend } from "./st.js";
+import { allPatterns } from "./patterns.js";
+import { wyckoff } from "./wyckoff.js";
+import { weeklyProfile } from "./weekly.js";
 import { dgtMove, mostTouched, premiumDiscount, goldenPocketZones, elliott, oteAbc, pois, angleStructure } from "./struct2.js";
 import { tgif, tgifLayer, volDivergence, volDivLayer } from "./extra.js";
 
@@ -54,6 +57,9 @@ export function runEngine({ bars, barSec, daily, layers, tick }) {
   ctx.ote = oteAbc(bars, barSec);
   ctx.poi = pois(bars, barSec, ny);
   ctx.ams = angleStructure(bars);
+  ctx.pat = allPatterns(bars);
+  ctx.wy = wyckoff(bars);
+  ctx.week = weeklyProfile(bars, barSec, ny);
 
   if (layers.kz) items.push(...kzLayer(bars, barSec, ny, sessions, daily, KZ_DEFAULTS));
   if (layers.milana) items.push(...milana(bars, barSec, MILANA_DEFAULTS).items);
