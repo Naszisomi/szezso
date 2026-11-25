@@ -58,8 +58,8 @@ export function swings(bars, len = 5) {
     let isH = true, isL = true;
     for (let j = i - len; j <= i + len && (isH || isL); j++) {
       if (j === i) continue;
-      if (bars[j].h >= bars[i].h) isH = false;
-      if (bars[j].l <= bars[i].l) isL = false;
+      if (j < i ? bars[j].h >= bars[i].h : bars[j].h > bars[i].h) isH = false;
+      if (j < i ? bars[j].l <= bars[i].l : bars[j].l < bars[i].l) isL = false;
     }
     if (isH) hi.push(i);
     if (isL) lo.push(i);

@@ -11,6 +11,7 @@ import { oscillators } from "./osc.js";
 import { gannEvents, gannTimeScore, GANN_YEARS } from "./gann.js";
 import { autoFib, gann, fibLayer } from "./fib.js";
 import { supertrend } from "./st.js";
+import { dgtMove, mostTouched, premiumDiscount, goldenPocketZones, elliott, oteAbc, pois, angleStructure } from "./struct2.js";
 import { tgif, tgifLayer, volDivergence, volDivLayer } from "./extra.js";
 
 export const LAYERS = [
@@ -45,6 +46,14 @@ export function runEngine({ bars, barSec, daily, layers, tick }) {
   ctx.st = supertrend(bars);
   ctx.tgif = barSec <= 3600 ? tgif(bars, barSec, ny) : [];
   ctx.voldiv = volDivergence(bars, 5, 6, atr14);
+  ctx.move = dgtMove(bars);
+  ctx.touched = mostTouched(bars);
+  ctx.pd = premiumDiscount(bars);
+  ctx.gpz = goldenPocketZones(daily);
+  ctx.ew = elliott(bars);
+  ctx.ote = oteAbc(bars, barSec);
+  ctx.poi = pois(bars, barSec, ny);
+  ctx.ams = angleStructure(bars);
 
   if (layers.kz) items.push(...kzLayer(bars, barSec, ny, sessions, daily, KZ_DEFAULTS));
   if (layers.milana) items.push(...milana(bars, barSec, MILANA_DEFAULTS).items);
