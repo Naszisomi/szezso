@@ -44,7 +44,7 @@ export function runEngine({ bars, barSec, daily, layers, tick }) {
   ctx.gannBox = gann(bars, ctx.fib);
   ctx.st = supertrend(bars);
   ctx.tgif = barSec <= 3600 ? tgif(bars, barSec, ny) : [];
-  ctx.voldiv = volDivergence(bars);
+  ctx.voldiv = volDivergence(bars, 5, 6, atr14);
 
   if (layers.kz) items.push(...kzLayer(bars, barSec, ny, sessions, daily, KZ_DEFAULTS));
   if (layers.milana) items.push(...milana(bars, barSec, MILANA_DEFAULTS).items);
