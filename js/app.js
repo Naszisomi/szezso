@@ -120,15 +120,6 @@ class DataSet {
   compute() {
     const items = [];
     if (layers.milana) items.push(...milana(this.bars, BARS[this.tf].sec, MILANA_DEFAULTS).items);
-    if (this.bars.length && this.bars[0].ext) {
-      const first = this.bars.find(b => !b.ext);
-      if (first) {
-        let hi = -Infinity, lo = Infinity;
-        for (const b of this.bars) { if (b.h > hi) hi = b.h; if (b.l < lo) lo = b.l; }
-        items.push({ type: "line", t1: first.t, p1: lo * 0.2, t2: first.t, p2: hi * 5, color: "#9aa0a6", width: 1, style: "dashed" });
-        items.push({ type: "label", t: first.t, p: hi, text: "OKX UM ettől →\n← Hyperliquid USDC", color: "#80868b", size: 11, align: "left", vAlign: "below" });
-      }
-    }
     this.scene = { items };
   }
   emitReset(shift = 0) { this.compute(); for (const p of this.panels) p.reset(shift); }
@@ -246,7 +237,10 @@ class ChartPanel {
     }));
     if (this.volume) this.volume.setData(bars.map(b => b.ext ? { time: chartTime(b.t) } :
       { time: chartTime(b.t), value: b.v, color: (b.c >= b.o ? UP : DOWN) + "66" }));
-    if (bars.length && this.first) { ts.scrollToRealTime(); this.first = false; }
+    if (bars.length && this.first) {
+      this.candles.priceScale().applyOptions({ autoScale: true });   // új idősík/termék: ár-tengely újra automatikus
+      ts.scrollToRealTime(); this.first = false;
+    }
     else if (r && shift) ts.setVisibleLogicalRange({ from: r.from + shift, to: r.to + shift });
     this.layer.refresh();
     this.setTitle();
