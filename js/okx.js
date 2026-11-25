@@ -5,14 +5,15 @@
 export const REST = "https://www.okx.com";
 export const WS_BUSINESS = "wss://ws.okx.com:8443/ws/v5/business";
 
-// Idősík -> OKX bar kód. A napi gyertya UTC szerint (mint a TradingView).
+// Idősík -> OKX bar kód. A napi/heti/havi gyertya UTC szerint (mint a TradingView).
 export const BARS = {
-  "1m":  { okx: "1m",    sec: 60 },
   "5m":  { okx: "5m",    sec: 300 },
   "15m": { okx: "15m",   sec: 900 },
   "1h":  { okx: "1H",    sec: 3600 },
   "4h":  { okx: "4H",    sec: 14400 },
   "1D":  { okx: "1Dutc", sec: 86400 },
+  "1W":  { okx: "1Wutc", sec: 604800 },
+  "1M":  { okx: "1Mutc", sec: 2592000 },   // a hónap hossza változó; csak a jövőbe rajzoláshoz közelítés
 };
 
 // OKX gyertya-sor: [ts, o, h, l, c, vol(szerz.), volCcy(coin), volCcyQuote(USD), confirm]

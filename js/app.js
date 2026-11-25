@@ -3,6 +3,7 @@
 // és „HYPE·BTC·ETH” (a három termék egyszerre).
 import { BARS, fetchLatest, fetchOlder, LiveFeed } from "./okx.js";
 import { loadCandles, saveCandles, merge, getPref, setPref } from "./store.js";
+import { hlHistory } from "./hl.js";
 import { SceneLayer } from "./draw.js";
 import { milana, MILANA_DEFAULTS, milanaHistoryFrom } from "./ind/milana.js";
 
@@ -65,9 +66,13 @@ class DataSet {
       const gap = cached.length && fresh.length && fresh[0].t > cached[cached.length - 1].t;
       this.bars = gap ? fresh : merge(cached, fresh);
       this.emitReset();
-      while (!this.dead && this.bars.length < 1000 && !this.noMoreOlder) await this.loadOlder(true);
-      saveCandles(this.inst.instId, this.tf, this.bars);
+      while (!this.dead && this.bars.length < 1000 && !this.noMoreOlder) {
+        if (this.loadingOlder) { await new Promise(r => setTimeout(r, 200)); continue; }
+        await this.loadOlder(true);
+      }
+      this.save();
       await this.backfill();
+      await this.extendHistory();
     } catch (e) { setStatus("Adathiba: " + e.message, "err"); }
   }
   // Az indikátoroknak szükséges előzmény (pl. Milana heti nyitás) visszatöltése a háttérben,
@@ -91,19 +96,44 @@ class DataSet {
       if (this.dead) return;
       this.bars = merge(acc, this.bars);   // közben érkezett élő gyertyák megtartása
       this.emitReset(this.bars.length - before);
-      saveCandles(this.inst.instId, this.tf, this.bars);
+      this.save();
       setStatus("");
     } catch (e) { setStatus("Előzmény hiba: " + e.message, "err"); }
     finally { this.loadingOlder = false; }
   }
+  save() { saveCandles(this.inst.instId, this.tf, this.bars.filter(b => !b.ext)); }
+  // 1D/1W/1M: az OKX X-Perp teljes múltja, előtte a Hyperliquid USDC adat (halványan, jelölve).
+  async extendHistory() {
+    if (!["1D", "1W", "1M"].includes(this.tf) || !this.bars.length || this.bars[0].ext) return;
+    while (!this.dead && !this.noMoreOlder) {
+      if (this.loadingOlder) { await new Promise(r => setTimeout(r, 200)); continue; }
+      await this.loadOlder(true);
+    }
+    if (this.dead || !this.bars.length) return;
+    try {
+      const ext = await hlHistory(this.key, this.tf, this.bars[0].t);
+      if (this.dead || !ext.length || this.bars[0].ext) return;
+      this.bars = ext.concat(this.bars);
+      this.emitReset(ext.length);
+    } catch (e) { setStatus("Hyperliquid előzmény nem érhető el", "err"); }
+  }
   compute() {
     const items = [];
     if (layers.milana) items.push(...milana(this.bars, BARS[this.tf].sec, MILANA_DEFAULTS).items);
+    if (this.bars.length && this.bars[0].ext) {
+      const first = this.bars.find(b => !b.ext);
+      if (first) {
+        let hi = -Infinity, lo = Infinity;
+        for (const b of this.bars) { if (b.h > hi) hi = b.h; if (b.l < lo) lo = b.l; }
+        items.push({ type: "line", t1: first.t, p1: lo * 0.2, t2: first.t, p2: hi * 5, color: "#9aa0a6", width: 1, style: "dashed" });
+        items.push({ type: "label", t: first.t, p: hi, text: "OKX UM ettől →\n← Hyperliquid USDC", color: "#80868b", size: 11, align: "left", vAlign: "below" });
+      }
+    }
     this.scene = { items };
   }
   emitReset(shift = 0) { this.compute(); for (const p of this.panels) p.reset(shift); }
   async loadOlder(silent) {
-    if (this.loadingOlder || this.noMoreOlder || !this.bars.length || this.dead) return;
+    if (this.loadingOlder || this.noMoreOlder || !this.bars.length || this.dead || this.bars[0].ext) return;
     this.loadingOlder = true;
     try {
       const older = await fetchOlder(this.inst.instId, this.tf, this.bars[0].t);
@@ -112,7 +142,7 @@ class DataSet {
       const before = this.bars.length;
       this.bars = merge(older, this.bars);
       this.emitReset(silent ? 0 : this.bars.length - before);
-      saveCandles(this.inst.instId, this.tf, this.bars);
+      this.save();
     } catch (e) { setStatus("Régebbi adat hiba: " + e.message, "err"); }
     finally { this.loadingOlder = false; }
   }
@@ -123,7 +153,7 @@ class DataSet {
     if (bar.t === last.t) this.bars[this.bars.length - 1] = bar; else this.bars.push(bar);
     this.compute();
     for (const p of this.panels) p.update(bar);
-    if (bar.done) saveCandles(this.inst.instId, this.tf, this.bars);
+    if (bar.done) this.save();
   }
   async refreshLatest() {
     try {
@@ -136,7 +166,7 @@ class DataSet {
 }
 
 const hub = {
-  tf: getPref("tf", "15m"),
+  tf: BARS[getPref("tf", "15m")] ? getPref("tf", "15m") : "15m",
   sets: new Map(),
   get(key) {
     const k = key + "|" + this.tf;
@@ -209,8 +239,13 @@ class ChartPanel {
     const bars = this.ds ? this.ds.bars : [];
     const ts = this.chart.timeScale();
     const r = ts.getVisibleLogicalRange();
-    this.candles.setData(bars.map(b => ({ time: chartTime(b.t), open: b.o, high: b.h, low: b.l, close: b.c })));
-    if (this.volume) this.volume.setData(bars.map(b => ({ time: chartTime(b.t), value: b.v, color: (b.c >= b.o ? UP : DOWN) + "66" })));
+    this.candles.setData(bars.map(b => {
+      const d = { time: chartTime(b.t), open: b.o, high: b.h, low: b.l, close: b.c };
+      if (b.ext) { const c = (b.c >= b.o ? UP : DOWN) + "59"; d.color = c; d.borderColor = c; d.wickColor = c; }
+      return d;
+    }));
+    if (this.volume) this.volume.setData(bars.map(b => b.ext ? { time: chartTime(b.t) } :
+      { time: chartTime(b.t), value: b.v, color: (b.c >= b.o ? UP : DOWN) + "66" }));
     if (bars.length && this.first) { ts.scrollToRealTime(); this.first = false; }
     else if (r && shift) ts.setVisibleLogicalRange({ from: r.from + shift, to: r.to + shift });
     this.layer.refresh();

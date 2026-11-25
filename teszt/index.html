@@ -37,6 +37,12 @@
 </section>
 
 <section>
+  <h2>Hyperliquid (régi napi/heti/havi adat)</h2>
+  <button class="main" onclick="testHl()">Hyperliquid teszt</button>
+  <div id="hl"></div>
+</section>
+
+<section>
   <h2>2. X-Perp termékek</h2>
   <div id="insts">Még nincs adat – indítsd el a tesztet.</div>
 </section>
@@ -100,6 +106,24 @@ async function getJson(url) {
   const j = await r.json();
   if (j.code !== "0") throw new Error("OKX hiba " + j.code + ": " + j.msg);
   return j.data;
+}
+
+async function testHl() {
+  $("hl").innerHTML = "";
+  for (const coin of ["@107", "HYPE", "BTC", "ETH"]) {
+    const line = document.createElement("div");
+    line.textContent = coin + ": ellenőrzés…"; $("hl").appendChild(line);
+    try {
+      const r = await fetch("https://api.hyperliquid.xyz/info", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "candleSnapshot", req: { coin, interval: "1d", startTime: Date.now() - 4900 * 86400000, endTime: Date.now() } }) });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const d = await r.json();
+      const name = coin === "@107" ? "HYPE/USDC spot" : coin + "-USDC perp";
+      line.innerHTML = d.length
+        ? `${name}: <span class="ok">elérhető ✓</span> ${d.length} napi gyertya, első: ${new Date(+d[0].t).toLocaleDateString("hu-HU")}, utolsó záró: ${d[d.length - 1].c}`
+        : `${name}: <span class="err">üres válasz</span>`;
+    } catch (e) { line.innerHTML = `${coin}: <span class="err">nem érhető el ✗</span> ${e.message || e}`; }
+  }
 }
 
 async function runAll() {
