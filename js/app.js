@@ -130,7 +130,7 @@ class DataSet {
   }
   compute() {
     const items = [];
-    const r = runEngine({ bars: this.bars, barSec: BARS[this.tf].sec, daily: this.daily, layers });
+    const r = runEngine({ bars: this.bars, barSec: BARS[this.tf].sec, daily: this.daily, layers, tick: this.inst.tick });
     items.push(...r.items);
     this.barColors = r.barColors;
     this.scene = { items };

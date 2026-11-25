@@ -5,27 +5,33 @@ import { nyClock } from "./ny.js";
 import { kzSessions, kzLayer, KZ_DEFAULTS } from "./kz.js";
 import { milana, MILANA_DEFAULTS } from "../ind/milana.js";
 import { atr, computeGaps, gapLayer, crtColors } from "./gaps.js";
+import { volumeProfile, vpArrowLayer } from "./vp.js";
+import { orderBlocks, liquidity, volumaticFvg, htfLevels } from "./struct.js";
 
 export const LAYERS = [
   { key: "kz",     label: "Killzone",  def: true },
   { key: "milana", label: "Milana",    def: true },
   { key: "gaps",   label: "Rések",     def: true },
   { key: "crt",    label: "CRT szín",  def: true },
+  { key: "vp",     label: "VP nyíl",   def: true },
 ];
 
 // input: { bars, barSec, daily, layers:{kz:true,...} } -> { items, ctx, barColors }
-export function runEngine({ bars, barSec, daily, layers }) {
+export function runEngine({ bars, barSec, daily, layers, tick }) {
   const items = [];
   if (!bars.length) return { items, ctx: null };
   const ny = nyClock(bars);
   const sessions = kzSessions(bars, ny, KZ_DEFAULTS);
   const atr14 = atr(bars, 14);
   const gaps = computeGaps(bars, barSec, atr14);
-  const ctx = { ny, sessions, atr14, gaps };
+  const vp = volumeProfile(bars, tick);
+  const ctx = { ny, sessions, atr14, gaps, vp,
+    ob: orderBlocks(bars), liq: liquidity(bars), vfvg: volumaticFvg(bars), htf: htfLevels(bars, barSec, daily) };
 
   if (layers.kz) items.push(...kzLayer(bars, barSec, ny, sessions, daily, KZ_DEFAULTS));
   if (layers.milana) items.push(...milana(bars, barSec, MILANA_DEFAULTS).items);
   if (layers.gaps) items.push(...gapLayer(bars, barSec, gaps));
+  if (layers.vp) items.push(...vpArrowLayer(bars, vp));
   const barColors = layers.crt ? crtColors(bars) : null;
   return { items, ctx, barColors };
 }
