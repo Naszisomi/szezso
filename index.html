@@ -2,7 +2,7 @@
 <html lang="hu">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
@@ -10,7 +10,9 @@
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #fff; color: #111; overscroll-behavior: none; }
-  body { display: flex; flex-direction: column; }
+  body { display: flex; flex-direction: column; touch-action: pan-x pan-y; }
+  /* a charton a csípés/húzás csak a chartot nagyítja, az oldalt nem (különben szétcsúszik a kép) */
+  #views, #views * { touch-action: none; }
   header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid #e5e5e5; }
   header .brand { font-weight: 700; margin-right: 6px; }
   .group { display: flex; gap: 4px; flex-wrap: wrap; }

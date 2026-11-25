@@ -239,7 +239,8 @@ class DataSet {
     if (r.error) setStatus("Motor hiba: " + r.error, "err");
     else {
       const old = this.codes, oldT0 = this.codesT0;
-      this.scene = { items: r.items };
+      this.scene = { items: r.items.filter(it => !it.pane) };
+      this.volScene = { items: r.items.filter(it => it.pane === "vol") };
       this.codes = r.hasColors ? r.codes : null; this.codesT0 = r.t0;
       const recolor = !sameCodes(old, oldT0, this.codes, this.codesT0);
       for (const p of this.panels) p.applyResult(recolor);
@@ -357,6 +358,8 @@ class ChartPanel {
       const panes = this.chart.panes();
       if (panes[1]) panes[1].setStretchFactor(0.18);
       if (panes[0]) panes[0].setStretchFactor(0.82);
+      this.volLayer = new SceneLayer(() => this.ds ? this.ds.bars : [], () => this.ds ? this.ds.volScene : null, () => BARS[hub.tf].sec);
+      this.volume.attachPrimitive(this.volLayer);
     }
     this.layer = new SceneLayer(() => this.ds ? this.ds.bars : [], () => this.ds ? this.ds.scene : null, () => BARS[hub.tf].sec);
     this.candles.attachPrimitive(this.layer);
@@ -406,6 +409,7 @@ class ChartPanel {
     if (recolor) this.candles.setData(bars.map((b, i) => candlePoint(b, ds.colorAt(i))));
     else if (bars.length) this.candles.update(candlePoint(bars[bars.length - 1], ds.colorAt(bars.length - 1)));
     this.layer.refresh();
+    if (this.volLayer) this.volLayer.refresh();
   }
   scheduleHL() {
     if (this.hlRaf) return;

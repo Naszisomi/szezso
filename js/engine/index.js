@@ -9,6 +9,9 @@ import { volumeProfile, vpArrowLayer } from "./vp.js";
 import { orderBlocks, liquidity, volumaticFvg, htfLevels } from "./struct.js";
 import { oscillators } from "./osc.js";
 import { gannEvents, gannTimeScore, GANN_YEARS } from "./gann.js";
+import { autoFib, gann, fibLayer } from "./fib.js";
+import { supertrend } from "./st.js";
+import { tgif, tgifLayer, volDivergence, volDivLayer } from "./extra.js";
 
 export const LAYERS = [
   { key: "kz",     label: "Killzone",  def: true },
@@ -16,6 +19,9 @@ export const LAYERS = [
   { key: "gaps",   label: "Rések",     def: true },
   { key: "crt",    label: "CRT szín",  def: true },
   { key: "vp",     label: "VP nyíl",   def: true },
+  { key: "fib",    label: "Auto Fib",  def: false },
+  { key: "tgif",   label: "TGIF",      def: true },
+  { key: "voldiv", label: "Vol. div.", def: true },
 ];
 
 // input: { bars, barSec, daily, layers:{kz:true,...} } -> { items, ctx, barColors }
@@ -34,11 +40,19 @@ export function runEngine({ bars, barSec, daily, layers, tick }) {
   ctx.gann = gannEvents(daily, now - 30 * 86400000, now + 120 * 86400000);
   ctx.gannNow = gannTimeScore(ctx.gann, now);
   ctx.gannYear = GANN_YEARS[new Date(now).getUTCFullYear()] || null;
+  ctx.fib = autoFib(bars);
+  ctx.gannBox = gann(bars, ctx.fib);
+  ctx.st = supertrend(bars);
+  ctx.tgif = barSec <= 3600 ? tgif(bars, barSec, ny) : [];
+  ctx.voldiv = volDivergence(bars);
 
   if (layers.kz) items.push(...kzLayer(bars, barSec, ny, sessions, daily, KZ_DEFAULTS));
   if (layers.milana) items.push(...milana(bars, barSec, MILANA_DEFAULTS).items);
   if (layers.gaps) items.push(...gapLayer(bars, barSec, gaps));
   if (layers.vp) items.push(...vpArrowLayer(bars, vp));
+  if (layers.fib) items.push(...fibLayer(bars, barSec, ctx.fib));
+  if (layers.tgif) items.push(...tgifLayer(bars, barSec, ctx.tgif));
+  if (layers.voldiv) items.push(...volDivLayer(bars, ctx.voldiv));
   const barColors = layers.crt ? crtColors(bars) : null;
   return { items, ctx, barColors };
 }
