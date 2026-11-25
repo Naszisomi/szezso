@@ -55,9 +55,14 @@ export class SceneLayer {
     const scene = this.getScene();
     if (!scene || !scene.items.length || !this.chart) return;
     target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
-      const order = { box: 0, vline: 1, line: 1, poly: 2, label: 3 };
-      const isBack = it => it.type === "box" || it.type === "vline";
-      const items = scene.items.filter(it => isBack(it) === back).sort((a, b) => order[a.type] - order[b.type]);
+      // a szétválogatás jelenetenként egyszer (nem minden képkockánál)
+      if (!scene._sorted) {
+        const order = { box: 0, vline: 1, line: 1, poly: 2, label: 3 };
+        const isBack = it => it.type === "box" || it.type === "vline";
+        const all = [...scene.items].sort((a, b) => order[a.type] - order[b.type]);
+        scene._sorted = { back: all.filter(isBack), front: all.filter(it => !isBack(it)) };
+      }
+      const items = back ? scene._sorted.back : scene._sorted.front;
       for (const it of items) {
         try { this[it.type](ctx, it, mediaSize); } catch { /* egy hibás elem ne állítsa meg a többit */ }
       }

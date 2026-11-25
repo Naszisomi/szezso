@@ -51,10 +51,46 @@ function setStatus(msg, cls) {
 
 // ── Adatközpont: termékenként és idősíkonként egyszer tölti le és frissíti a gyertyákat,
 // akárhány chart mutatja is őket. ──
+// ── Motor-szál ──
+let dsCounter = 0;
+const engine = (() => {
+  const cbs = new Map();
+  let w = null;
+  try { w = new Worker(new URL("./engine/worker.js", import.meta.url), { type: "module" }); } catch {}
+  if (w) w.onmessage = e => { const cb = cbs.get(e.data.id); if (cb) cb(e.data); };
+  return {
+    send(msg, cb) {
+      cbs.set(msg.id, cb);
+      if (w) { w.postMessage(msg); return; }
+      // tartalék: ha nincs Worker, a fő szálon számol
+      import("./engine/index.js").then(({ runEngine }) => {
+        const st = (this._st ||= new Map()), s0 = st.get(msg.id) || { bars: [], daily: null };
+        if (msg.bars) s0.bars = msg.bars;
+        if (msg.tail) for (const b of msg.tail) { const l = s0.bars[s0.bars.length - 1]; if (l && l.t === b.t) s0.bars[s0.bars.length - 1] = b; else if (!l || b.t > l.t) s0.bars.push(b); }
+        if (msg.daily !== undefined) s0.daily = msg.daily;
+        st.set(msg.id, s0);
+        const r = runEngine({ bars: s0.bars, barSec: msg.barSec, daily: s0.daily, layers: msg.layers, tick: msg.tick });
+        const codes = new Uint8Array(r.barColors ? s0.bars.length : 0);
+        if (r.barColors) r.barColors.forEach((c, i) => { codes[i] = c === "#FFEB3B" ? 1 : c === "#9C27B0" ? 2 : 0; });
+        cb({ id: msg.id, seq: msg.seq, items: r.items, codes, hasColors: !!r.barColors, t0: s0.bars.length ? s0.bars[0].t : 0 });
+      });
+    },
+    drop(id) { cbs.delete(id); if (w) w.postMessage({ id, drop: true }); },
+  };
+})();
+function sameCodes(a, at, b, bt) {
+  if (!a || !b) return !a && !b;
+  if (at !== bt || a.length > b.length + 2 || b.length > a.length + 2) return false;
+  const n = Math.min(a.length, b.length) - 1;           // az utolsó gyertyát a frissítés úgyis kezeli
+  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 class DataSet {
   constructor(key, tf) {
     this.key = key; this.tf = tf; this.inst = INSTRUMENTS[key];
     this.bars = []; this.panels = new Set(); this.scene = { items: [] };
+    this.wid = ++dsCounter; this.seq = 0;
     this.loadingOlder = false; this.noMoreOlder = false; this.dead = false;
     this.ready = this.init();
   }
@@ -133,12 +169,44 @@ class DataSet {
       this.emitReset(ext.length);
     } catch (e) { setStatus("Hyperliquid előzmény nem érhető el", "err"); }
   }
+  // A motor a háttérszálon fut: ide csak a kérés és az eredmény átvétele tartozik.
   compute() {
-    const items = [];
-    const r = runEngine({ bars: this.bars, barSec: BARS[this.tf].sec, daily: this.daily, layers, tick: this.inst.tick });
-    items.push(...r.items);
-    this.barColors = r.barColors;
-    this.scene = { items };
+    if (this.busy) { this.pending = true; return; }
+    this.busy = true; this.pending = false;
+    const msg = { id: this.wid, seq: ++this.seq, barSec: BARS[this.tf].sec, layers: { ...layers }, tick: this.inst.tick };
+    const b = this.bars, first = b.length ? b[0].t : 0;
+    if (this.sentFirst === first && b.length >= this.sentLen && b.length - this.sentLen <= 2) msg.tail = b.slice(Math.max(0, this.sentLen - 1));
+    else msg.bars = b;
+    this.sentFirst = first; this.sentLen = b.length;
+    if (this.dailySent !== this.daily) { msg.daily = this.daily || null; this.dailySent = this.daily; }
+    engine.send(msg, r => this.onResult(r));
+  }
+  onResult(r) {
+    this.busy = false;
+    if (this.dead) return;
+    if (r.error) setStatus("Motor hiba: " + r.error, "err");
+    else {
+      const old = this.codes, oldT0 = this.codesT0;
+      this.scene = { items: r.items };
+      this.codes = r.hasColors ? r.codes : null; this.codesT0 = r.t0;
+      const recolor = !sameCodes(old, oldT0, this.codes, this.codesT0);
+      for (const p of this.panels) p.applyResult(recolor);
+    }
+    if (this.pending) setTimeout(() => this.compute(), 120);
+  }
+  // a gyertya CRT színe (az eredmény a küldéskori gyertyákhoz igazodik, ezért idő szerint keressük)
+  colorAt(i) {
+    if (!this.codes || !this.bars.length) return null;
+    const off = this.codesIndexBase();
+    const c = this.codes[i - off];
+    return c === 1 ? "#FFEB3B" : c === 2 ? "#9C27B0" : null;
+  }
+  codesIndexBase() {
+    if (this._cb && this._cb.t0 === this.codesT0 && this._cb.first === this.bars[0].t) return this._cb.off;
+    let lo = 0, hi = this.bars.length - 1, off = 0;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (this.bars[m].t < this.codesT0) lo = m + 1; else { off = m; hi = m - 1; } }
+    this._cb = { t0: this.codesT0, first: this.bars[0].t, off };
+    return off;
   }
   emitReset(shift = 0) { this.compute(); for (const p of this.panels) p.reset(shift); }
   async loadOlder(silent) {
@@ -161,13 +229,8 @@ class DataSet {
     if (bar.t < last.t) return;
     if (bar.t === last.t) this.bars[this.bars.length - 1] = bar; else this.bars.push(bar);
     if (this.dailyDay !== undefined && Math.floor(Date.now() / 86400000) !== this.dailyDay) { this.dailyDay = undefined; this.loadDaily(); }
-    // élő árnál a motor legfeljebb 3×/mp számol (a gyertya azonnal frissül), gyertyazáráskor azonnal
     for (const p of this.panels) p.update(bar);
-    const now = performance.now();
-    clearTimeout(this.cTimer);
-    const run = () => { this.lastCompute = performance.now(); this.compute(); for (const p of this.panels) p.repaint(); };
-    if (bar.done || !this.lastCompute || now - this.lastCompute > 330) run();
-    else this.cTimer = setTimeout(run, 330 - (now - this.lastCompute));
+    this.compute();                     // a háttérszál foglaltsága magától ritkítja az élő számolást
     if (bar.done) this.save();
   }
   async refreshLatest() {
@@ -192,7 +255,7 @@ const hub = {
     return this.sets.get(k);
   },
   setTf(tf) {
-    for (const ds of this.sets.values()) { ds.dead = true; feed.unsubscribe(ds.inst.instId, ds.tf); }
+    for (const ds of this.sets.values()) { ds.dead = true; engine.drop(ds.wid); feed.unsubscribe(ds.inst.instId, ds.tf); }
     this.sets.clear();
     this.tf = tf;
   },
@@ -245,7 +308,11 @@ class ChartPanel {
     }
     this.layer = new SceneLayer(() => this.ds ? this.ds.bars : [], () => this.ds ? this.ds.scene : null, () => BARS[hub.tf].sec);
     this.candles.attachPrimitive(this.layer);
-    this.chart.timeScale().subscribeVisibleLogicalRangeChange(r => { if (r && r.from < 30 && this.ds) this.ds.loadOlder(); });
+    this.chart.timeScale().subscribeVisibleLogicalRangeChange(r => { if (r && r.from < 30 && this.ds) this.ds.loadOlder(); this.scheduleHL(); });
+    // a látható szakasz csúcsa és alja az ártengelyen (mint a TradingView-n)
+    const hl = title => this.candles.createPriceLine({ price: 0, title, color: "#787B86", lineVisible: false, axisLabelVisible: false,
+      axisLabelColor: "#E3EFFD", axisLabelTextColor: "#131722" });
+    this.hiLine = hl("High"); this.loLine = hl("Low");
     this.titleEl = document.createElement("div");
     this.titleEl.className = "ctitle" + (small ? " small" : "");
     el.appendChild(this.titleEl);
@@ -262,8 +329,8 @@ class ChartPanel {
     const bars = this.ds ? this.ds.bars : [];
     const ts = this.chart.timeScale();
     const r = ts.getVisibleLogicalRange();
-    const bc = this.ds ? this.ds.barColors : null;
-    this.candles.setData(bars.map((b, i) => candlePoint(b, bc && bc[i])));
+    const ds = this.ds;
+    this.candles.setData(bars.map((b, i) => candlePoint(b, ds && ds.colorAt(i))));
     if (this.volume) this.volume.setData(bars.map(b => b.ext ? { time: chartTime(b.t) } :
       { time: chartTime(b.t), value: b.v, color: (b.c >= b.o ? UP : DOWN) + "66" }));
     if (bars.length && this.first) {
@@ -275,18 +342,35 @@ class ChartPanel {
     this.setTitle();
   }
   update(b) {
-    const bc = this.ds ? this.ds.barColors : null;
-    this.candles.update(candlePoint(b, bc && bc[bc.length - 1]));
+    const ds = this.ds, n = ds ? ds.bars.length : 0;
+    this.candles.update(candlePoint(b, ds && ds.bars[n - 1] === b ? ds.colorAt(n - 1) : null));
     if (this.volume) this.volume.update({ time: chartTime(b.t), value: b.v, color: (b.c >= b.o ? UP : DOWN) + "66" });
     this.layer.refresh();
     this.setTitle();
   }
-  repaint() {                         // a motor új eredménye: CRT szín az utolsó gyertyán + rajzok
-    const bc = this.ds ? this.ds.barColors : null, bars = this.ds ? this.ds.bars : [];
-    if (bc && bars.length) this.candles.update(candlePoint(bars[bars.length - 1], bc[bc.length - 1]));
+  // a motor új eredménye: ha a CRT színek változtak, újraszínez; különben csak az utolsó gyertya + rajzok
+  applyResult(recolor) {
+    const ds = this.ds, bars = ds ? ds.bars : [];
+    if (recolor) this.candles.setData(bars.map((b, i) => candlePoint(b, ds.colorAt(i))));
+    else if (bars.length) this.candles.update(candlePoint(bars[bars.length - 1], ds.colorAt(bars.length - 1)));
     this.layer.refresh();
   }
+  scheduleHL() {
+    if (this.hlRaf) return;
+    this.hlRaf = requestAnimationFrame(() => { this.hlRaf = 0; this.updateHL(); });
+  }
+  updateHL() {
+    const bars = this.ds ? this.ds.bars : [], r = this.chart.timeScale().getVisibleLogicalRange();
+    if (!bars.length || !r) { this.hiLine.applyOptions({ axisLabelVisible: false }); this.loLine.applyOptions({ axisLabelVisible: false }); return; }
+    const a = Math.max(0, Math.floor(r.from)), b = Math.min(bars.length - 1, Math.ceil(r.to));
+    let h = -Infinity, l = Infinity;
+    for (let i = a; i <= b; i++) { if (bars[i].h > h) h = bars[i].h; if (bars[i].l < l) l = bars[i].l; }
+    const ok = isFinite(h);
+    this.hiLine.applyOptions({ price: ok ? h : 0, axisLabelVisible: ok });
+    this.loLine.applyOptions({ price: ok ? l : 0, axisLabelVisible: ok });
+  }
   setTitle() {
+    this.scheduleHL();
     const bars = this.ds ? this.ds.bars : [];
     const last = bars[bars.length - 1];
     const acc = this.account ? `<span class="acc">${this.account}</span> ` : "";
