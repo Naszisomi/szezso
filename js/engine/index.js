@@ -7,6 +7,8 @@ import { milana, MILANA_DEFAULTS } from "../ind/milana.js";
 import { atr, computeGaps, gapLayer, crtColors } from "./gaps.js";
 import { volumeProfile, vpArrowLayer } from "./vp.js";
 import { orderBlocks, liquidity, volumaticFvg, htfLevels } from "./struct.js";
+import { oscillators } from "./osc.js";
+import { gannEvents, gannTimeScore, GANN_YEARS } from "./gann.js";
 
 export const LAYERS = [
   { key: "kz",     label: "Killzone",  def: true },
@@ -26,7 +28,12 @@ export function runEngine({ bars, barSec, daily, layers, tick }) {
   const gaps = computeGaps(bars, barSec, atr14);
   const vp = volumeProfile(bars, tick);
   const ctx = { ny, sessions, atr14, gaps, vp,
-    ob: orderBlocks(bars), liq: liquidity(bars), vfvg: volumaticFvg(bars), htf: htfLevels(bars, barSec, daily) };
+    ob: orderBlocks(bars), liq: liquidity(bars), vfvg: volumaticFvg(bars), htf: htfLevels(bars, barSec, daily),
+    osc: oscillators(bars, daily) };
+  const now = bars[bars.length - 1].t;
+  ctx.gann = gannEvents(daily, now - 30 * 86400000, now + 120 * 86400000);
+  ctx.gannNow = gannTimeScore(ctx.gann, now);
+  ctx.gannYear = GANN_YEARS[new Date(now).getUTCFullYear()] || null;
 
   if (layers.kz) items.push(...kzLayer(bars, barSec, ny, sessions, daily, KZ_DEFAULTS));
   if (layers.milana) items.push(...milana(bars, barSec, MILANA_DEFAULTS).items);
