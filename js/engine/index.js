@@ -15,6 +15,7 @@ import { allPatterns } from "./patterns.js";
 import { wyckoff } from "./wyckoff.js";
 import { weeklyProfile } from "./weekly.js";
 import { confluence, confluenceLayer } from "./confluence.js";
+import { narrativeLayer } from "./narrative.js";
 import { dgtMove, mostTouched, premiumDiscount, goldenPocketZones, elliott, oteAbc, pois, angleStructure } from "./struct2.js";
 import { tgif, tgifLayer, volDivergence, volDivLayer } from "./extra.js";
 
@@ -28,6 +29,7 @@ export const LAYERS = [
   { key: "tgif",   label: "TGIF",      def: true },
   { key: "voldiv", label: "Vol. div.", def: true },
   { key: "cf",     label: "Egyezés",   def: true },
+  { key: "ict",    label: "ICT-rajz",  def: true },
 ];
 
 // input: { bars, barSec, daily, layers:{kz:true,...} } -> { items, ctx, barColors }
@@ -65,6 +67,10 @@ export function runEngine({ bars, barSec, daily, layers, tick }) {
   ctx.dwm = dwmLevels(daily, now);
   const milItems = milana(bars, barSec, MILANA_DEFAULTS).items;
   ctx.cf = confluence(bars, ctx, milItems);
+  ctx.n = bars.length;
+  ctx.milanaTargets = milItems.flatMap(it => it.type === "line" && it.p1 === it.p2 ? [it.p1] : it.type === "box" ? [it.p1, it.p2] : []);
+  const nr = narrativeLayer(bars, barSec, ny, ctx);
+  ctx.nr = nr.info;
 
   if (layers.kz) items.push(...kzLayer(bars, barSec, ny, sessions, daily, KZ_DEFAULTS));
   if (layers.milana) items.push(...milItems);
@@ -74,6 +80,7 @@ export function runEngine({ bars, barSec, daily, layers, tick }) {
   if (layers.tgif) items.push(...tgifLayer(bars, barSec, ctx.tgif));
   if (layers.voldiv) items.push(...volDivLayer(bars, ctx.voldiv));
   if (layers.cf) items.push(...confluenceLayer(bars, barSec, ctx.cf));
+  if (layers.ict) items.push(...nr.items);
   const barColors = layers.crt ? crtColors(bars) : null;
   return { items, ctx, barColors };
 }
