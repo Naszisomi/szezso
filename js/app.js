@@ -5,10 +5,11 @@ import { BARS, fetchLatest, fetchOlder, LiveFeed } from "./okx.js";
 import { loadCandles, saveCandles, merge, getPref, setPref } from "./store.js";
 import { hlHistory } from "./hl.js";
 import { SceneLayer } from "./draw.js";
-import { milana, MILANA_DEFAULTS, milanaHistoryFrom } from "./ind/milana.js";
+import { milanaHistoryFrom } from "./ind/milana.js";
+import { runEngine, LAYERS } from "./engine/index.js";
 
 // Rétegek ki-be kapcsolása (a részletes beállítások az 5. lépésben jönnek)
-const layers = { milana: getPref("layer.milana", true) };
+const layers = Object.fromEntries(LAYERS.map(l => [l.key, getPref("layer." + l.key, l.def)]));
 
 const LWC = window.LightweightCharts;
 
@@ -71,6 +72,7 @@ class DataSet {
         await this.loadOlder(true);
       }
       this.save();
+      this.loadDaily();
       await this.backfill();
       await this.extendHistory();
     } catch (e) { setStatus("Adathiba: " + e.message, "err"); }
@@ -78,7 +80,7 @@ class DataSet {
   // Az indikátoroknak szükséges előzmény (pl. Milana heti nyitás) visszatöltése a háttérben,
   // egyben, hogy a chart ne ugráljon. A letöltött adat a gyorsítótárba kerül.
   async backfill() {
-    if (!layers.milana || !this.bars.length) return;
+    if (!this.bars.length) return;
     const need = milanaHistoryFrom(Date.now(), BARS[this.tf].sec);
     if (!(this.bars[0].t > need)) return;
     while (this.loadingOlder) await new Promise(r => setTimeout(r, 200));
@@ -101,6 +103,15 @@ class DataSet {
     } catch (e) { setStatus("Előzmény hiba: " + e.message, "err"); }
     finally { this.loadingOlder = false; }
   }
+  // Napi gyertyák (előző nap/hét/hónap H/L-hez) az 1D alatti idősíkokon; naponta frissül.
+  async loadDaily() {
+    if (BARS[this.tf].sec >= 86400) return;
+    try {
+      this.daily = await fetchLatest(this.inst.instId, "1D");
+      this.dailyDay = Math.floor(Date.now() / 86400000);
+      if (!this.dead) this.emitReset();
+    } catch {}
+  }
   save() { saveCandles(this.inst.instId, this.tf, this.bars.filter(b => !b.ext)); }
   // 1D/1W/1M: az OKX X-Perp teljes múltja, előtte a Hyperliquid USDC adat (halványan, jelölve).
   async extendHistory() {
@@ -119,7 +130,7 @@ class DataSet {
   }
   compute() {
     const items = [];
-    if (layers.milana) items.push(...milana(this.bars, BARS[this.tf].sec, MILANA_DEFAULTS).items);
+    items.push(...runEngine({ bars: this.bars, barSec: BARS[this.tf].sec, daily: this.daily, layers }).items);
     this.scene = { items };
   }
   emitReset(shift = 0) { this.compute(); for (const p of this.panels) p.reset(shift); }
@@ -142,6 +153,7 @@ class DataSet {
     const last = this.bars[this.bars.length - 1];
     if (bar.t < last.t) return;
     if (bar.t === last.t) this.bars[this.bars.length - 1] = bar; else this.bars.push(bar);
+    if (this.dailyDay !== undefined && Math.floor(Date.now() / 86400000) !== this.dailyDay) { this.dailyDay = undefined; this.loadDaily(); }
     this.compute();
     for (const p of this.panels) p.update(bar);
     if (bar.done) this.save();
@@ -311,7 +323,7 @@ function buildTfButtons() {
 function buildLayerButtons() {
   const box = document.getElementById("layers");
   box.innerHTML = "";
-  for (const [k, label] of [["milana", "Milana"]]) {
+  for (const { key: k, label } of LAYERS) {
     const b = document.createElement("button");
     b.textContent = label; b.className = layers[k] ? "on" : "";
     b.onclick = () => {

@@ -7,6 +7,8 @@
 //  { type:"box",   t1,p1,t2,p2, border, borderWidth, bg, text, textColor, textSize, hAlign:"left"|"center"|"right" }
 //  { type:"label", t,p, text, color, bg, size, align:"left"|"center"|"right", vAlign:"middle"|"above"|"below" }
 //  { type:"poly",  points:[{t,p}], color, width, style, arrow:false }
+//  { type:"vline", t, color, width, style }   – függőleges vonal a panel teljes magasságában
+// A feliratok legkisebb mérete 12 px (ne legyen „hangyányi”).
 
 export function rgba(hex, transp = 0) {          // transp: 0..100, mint a Pine-ban
   const h = hex.replace("#", "");
@@ -15,17 +17,20 @@ export function rgba(hex, transp = 0) {          // transp: 0..100, mint a Pine-
 }
 
 const DASH = { solid: [], dashed: [6, 4], dotted: [2, 3] };
+const MIN_FONT = 12;
 
 export class SceneLayer {
   // getBars(): a panel aktuális gyertyái; getScene(): {items}; barSec: gyertyahossz mp-ben
   constructor(getBars, getScene, getBarSec) {
     this.getBars = getBars; this.getScene = getScene; this.getBarSec = getBarSec;
-    this._view = { renderer: () => ({ draw: target => this.draw(target) }), zOrder: () => "top" };
+    // a dobozok és függőlegesek a gyertyák MÖGÖTT, a vonalak és feliratok előttük
+    this._back = { renderer: () => ({ draw: target => this.draw(target, true) }), zOrder: () => "bottom" };
+    this._view = { renderer: () => ({ draw: target => this.draw(target, false) }), zOrder: () => "top" };
   }
   attached(p) { this.chart = p.chart; this.series = p.series; this.requestUpdate = p.requestUpdate; }
   detached() { this.chart = null; }
   updateAllViews() {}
-  paneViews() { return [this._view]; }
+  paneViews() { return [this._back, this._view]; }
   refresh() { if (this.requestUpdate) this.requestUpdate(); }
 
   // idő (ms) -> x képpont; a jövőbeli időpontokat a gyertyahosszal vetíti előre
@@ -46,12 +51,13 @@ export class SceneLayer {
   }
   y(p) { return this.series.priceToCoordinate(p); }
 
-  draw(target) {
+  draw(target, back) {
     const scene = this.getScene();
     if (!scene || !scene.items.length || !this.chart) return;
     target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
-      const order = { box: 0, line: 1, poly: 2, label: 3 };
-      const items = [...scene.items].sort((a, b) => order[a.type] - order[b.type]);
+      const order = { box: 0, vline: 1, line: 1, poly: 2, label: 3 };
+      const isBack = it => it.type === "box" || it.type === "vline";
+      const items = scene.items.filter(it => isBack(it) === back).sort((a, b) => order[a.type] - order[b.type]);
       for (const it of items) {
         try { this[it.type](ctx, it, mediaSize); } catch { /* egy hibás elem ne állítsa meg a többit */ }
       }
@@ -65,6 +71,15 @@ export class SceneLayer {
     ctx.strokeStyle = it.color; ctx.lineWidth = it.width || 1; ctx.setLineDash(DASH[it.style || "solid"]);
     ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
     if (it.arrow) this.arrowHead(ctx, x1, y1, x2, y2, it.color, it.width || 1);
+    ctx.restore();
+  }
+
+  vline(ctx, it, size) {
+    const x = this.x(it.t);
+    if (x === null) return;
+    ctx.save();
+    ctx.strokeStyle = it.color; ctx.lineWidth = it.width || 1; ctx.setLineDash(DASH[it.style || "dotted"]);
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, size.height); ctx.stroke();
     ctx.restore();
   }
 
@@ -97,7 +112,7 @@ export class SceneLayer {
     if (it.bg) { ctx.fillStyle = it.bg; ctx.fillRect(l, t, w, h); }
     if (it.border) { ctx.strokeStyle = it.border; ctx.lineWidth = it.borderWidth || 1; ctx.setLineDash(DASH[it.borderStyle || "solid"]); ctx.strokeRect(l + .5, t + .5, w, h); }
     if (it.text && it.textColor) {
-      ctx.font = `${it.textSize || 11}px system-ui, sans-serif`;
+      ctx.font = `${Math.max(MIN_FONT, it.textSize || MIN_FONT)}px system-ui, sans-serif`;
       ctx.fillStyle = it.textColor; ctx.textBaseline = "middle";
       const a = it.hAlign || "right";
       ctx.textAlign = a;
@@ -111,7 +126,7 @@ export class SceneLayer {
     const x = this.x(it.t), y = this.y(it.p);
     if (x === null || y === null) return;
     ctx.save();
-    const size = it.size || 11;
+    const size = Math.max(MIN_FONT, it.size || MIN_FONT);
     ctx.font = `${it.bold ? "600 " : ""}${size}px system-ui, sans-serif`;
     const lines = String(it.text).split("\n");
     const w = Math.max(...lines.map(s => ctx.measureText(s).width)), lh = size * 1.25, h = lh * lines.length;
