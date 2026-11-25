@@ -47,8 +47,10 @@ export function computeGaps(bars, barSec, atrArr, cfg = GAP_DEFAULTS) {
       if (sameDir && cBot <= g.bot && cTop >= g.top) { g.closed = true; g.end = i; gaps.splice(k, 1); continue; }
       if (!g.wicked && (g.bull ? b.l <= g.top : b.h >= g.bot)) g.wicked = true;
     }
-    // 2) új rés
-    const p = bars[i - 1], pTop = Math.max(p.o, p.c), pBot = Math.min(p.o, p.c);
+    // 2) új rés (a Hyperliquid → OKX illesztésnél nem: ott a két piac árkülönbsége nem valódi rés)
+    const p = bars[i - 1];
+    if (!!p.ext !== !!b.ext) continue;
+    const pTop = Math.max(p.o, p.c), pBot = Math.min(p.o, p.c);
     const a = atrArr[i];
     const minGap = barSec >= cfg.minTfSec ? 0 : (isNaN(a) ? 0 : a * cfg.minAtr);
     const pc = crtFlags(p), cc = crtFlags(b);

@@ -61,3 +61,25 @@ export async function hlHistory(key, tf, beforeMs) {
   const days = await hlDaily(key);
   return aggregate(days, tf).filter(b => b.t < beforeMs).map(b => ({ ...b, ext: true }));
 }
+
+// 1h / 4h gyertyák egy időszakra (a régi szakasz nem változik, ezért a gyorsítótár elég, ha lefedi).
+const HL_IV = { "1h": "1h", "4h": "4h" };
+export async function hlRange(key, tf, start, end) {
+  const iv = HL_IV[tf], coins = SOURCES[key];
+  if (!iv || !coins || end <= start) return [];
+  const cacheKey = "HL:" + key, sec = tf === "1h" ? 3600000 : 14400000;
+  const cached = await loadCandles(cacheKey, tf);
+  const covers = cached.length && cached[0].t <= start + sec && cached[cached.length - 1].t >= end - 2 * sec;
+  let rows = cached;
+  if (!covers) {
+    for (const coin of coins) {
+      const d = await snapshot(coin, iv, start, end);
+      if (d.length) {
+        rows = d.map(x => ({ t: +x.t, o: +x.o, h: +x.h, l: +x.l, c: +x.c, v: +x.v * +x.c, done: true, src: coin })).sort((a, b) => a.t - b.t);
+        saveCandles(cacheKey, tf, rows);
+        break;
+      }
+    }
+  }
+  return rows.filter(b => b.t >= start && b.t < end).map(b => ({ ...b, ext: true }));
+}

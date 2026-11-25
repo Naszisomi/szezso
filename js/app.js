@@ -3,7 +3,7 @@
 // és „HYPE·BTC·ETH” (a három termék egyszerre).
 import { BARS, fetchLatest, fetchOlder, LiveFeed } from "./okx.js";
 import { loadCandles, saveCandles, merge, getPref, setPref } from "./store.js";
-import { hlHistory } from "./hl.js";
+import { hlHistory, hlRange } from "./hl.js";
 import { SceneLayer } from "./draw.js";
 import { milanaHistoryFrom } from "./ind/milana.js";
 import { runEngine, LAYERS } from "./engine/index.js";
@@ -86,6 +86,42 @@ function sameCodes(a, at, b, bt) {
   return true;
 }
 
+// ── A gyenge (kis forgalmú) OKX-kezdet felismerése, instrumentumonként ──
+// Az a nap, amelytől legalább 7 egymást követő napon a napi forgalom eléri az utolsó 3 hónap
+// napi medián forgalmának 10%-át. Ami előtte van, azt a Hyperliquid USDC adata helyettesíti.
+const EXT_TFS = ["1h", "4h", "1D", "1W", "1M"];
+const liqCache = new Map();
+function liquidStart(inst) {
+  if (!liqCache.has(inst.instId)) liqCache.set(inst.instId, (async () => {
+    let days = await fetchLatest(inst.instId, "1D");
+    for (let k = 0; k < 10 && days.length; k++) {
+      const older = await fetchOlder(inst.instId, "1D", days[0].t);
+      if (!older.length) break;
+      days = merge(older, days);
+    }
+    const done = days.filter(d => d.done);
+    if (!done.length) return 0;
+    const recent = done.slice(-90).map(d => d.v).sort((a, b) => a - b);
+    const thr = 0.1 * recent[Math.floor(recent.length / 2)];
+    let at = done[0].t;
+    for (let i = 0; i + 6 < done.length; i++) {
+      if (done.slice(i, i + 7).every(d => d.v >= thr)) { at = done[i].t; break; }
+    }
+    const txt = new Date(at).toLocaleDateString("hu-HU", { timeZone: "UTC" });
+    console.info(`[szezso] ${inst.short}: OKX UM adat ettől: ${txt} (előtte Hyperliquid USDC)`);
+    liqInfo[inst.short] = txt;
+    showLiqInfo();
+    return at;
+  })().catch(e => { liqCache.delete(inst.instId); throw e; }));
+  return liqCache.get(inst.instId);
+}
+const liqInfo = {};
+function showLiqInfo() {
+  const t = Object.entries(liqInfo).map(([k, v]) => `${k}: ${v}`).join(" · ");
+  setStatus("OKX adat ettől – " + t);
+  clearTimeout(showLiqInfo.tm); showLiqInfo.tm = setTimeout(() => setStatus(""), 15000);
+}
+
 class DataSet {
   constructor(key, tf) {
     this.key = key; this.tf = tf; this.inst = INSTRUMENTS[key];
@@ -155,18 +191,34 @@ class DataSet {
   }
   save() { saveCandles(this.inst.instId, this.tf, this.bars.filter(b => !b.ext)); }
   // 1D/1W/1M: az OKX X-Perp teljes múltja, előtte a Hyperliquid USDC adat (halványan, jelölve).
+  // 1h/4h/1D/1W/1M: az OKX X-Perp kezdete előtti ÉS a gyenge (kis forgalmú) kezdeti szakasza helyett
+  // a Hyperliquid USDC gyertyái (halványan). A gyenge kezdet instrumentumonként automatikusan felismerve.
   async extendHistory() {
-    if (!["1D", "1W", "1M"].includes(this.tf) || !this.bars.length || this.bars[0].ext) return;
-    while (!this.dead && !this.noMoreOlder) {
-      if (this.loadingOlder) { await new Promise(r => setTimeout(r, 200)); continue; }
-      await this.loadOlder(true);
+    if (!EXT_TFS.includes(this.tf) || !this.bars.length || this.bars[0].ext) return;
+    const sec = BARS[this.tf].sec * 1000;
+    if (this.tf === "1D" || this.tf === "1W" || this.tf === "1M") {
+      while (!this.dead && !this.noMoreOlder) {
+        if (this.loadingOlder) { await new Promise(r => setTimeout(r, 200)); continue; }
+        await this.loadOlder(true);
+      }
     }
     if (this.dead || !this.bars.length) return;
     try {
-      const ext = await hlHistory(this.key, this.tf, this.bars[0].t);
-      if (this.dead || !ext.length || this.bars[0].ext) return;
-      this.bars = ext.concat(this.bars);
-      this.emitReset(ext.length);
+      const ls = await liquidStart(this.inst);
+      if (this.dead || this.bars[0].ext) return;
+      const real = this.bars.filter(b => !b.ext && b.t >= ls);
+      if (!real.length) return;
+      const before = this.bars.length, first = real[0].t;
+      let ext;
+      if (this.tf === "1h" || this.tf === "4h") {
+        const start = Math.max(Date.now() - HISTORY_BARS * sec, 0);
+        if (first <= start) return;                    // az OKX adat végig jó, nincs mit cserélni
+        ext = await hlRange(this.key, this.tf, start, first);
+      } else ext = await hlHistory(this.key, this.tf, first);
+      if (this.dead || this.bars[0].ext) return;
+      if (!ext.length && real.length === this.bars.length) return;
+      this.bars = ext.concat(merge(real, this.bars.filter(b => b.t >= first)));
+      this.emitReset(this.bars.length - before);
     } catch (e) { setStatus("Hyperliquid előzmény nem érhető el", "err"); }
   }
   // A motor a háttérszálon fut: ide csak a kérés és az eredmény átvétele tartozik.
