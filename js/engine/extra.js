@@ -37,31 +37,32 @@ export function tgifLayer(bars, barSec, days) {
   return items;
 }
 
-// Futó láb divergenciája (még meg nem erősített swinggel is): az ár az utolsó `look` gyertyában
-// legalább 2 ATR-t ment egy irányba és most is a szélén jár, közben a volumen a láb csúcsvolumenétől
-// folyamatosan csökken (lejtő < 0, az utolsó harmad átlaga < a csúcs 60%-a).
+// Futó láb divergenciája (még meg nem erősített swinggel is), a klasszikus szabály szerint:
+// medvés: az ár ÚJ csúcsot tesz (az utolsó 5 gyertyában), de a csúcs körüli volumen legalább 30%-kal kisebb,
+// mint a láb előző csúcsánál, és a volumen most sem nő (utolsó 3 átlaga ≤ előző 3); bikás: ugyanez aljakkal.
+// (Egy egyszeri, ellentétes irányú volumenkiugrás nem számít – a két árcsúcs/-alj körüli volument vetjük össze.)
 function legDivergence(bars, atrArr, look = 40) {
   const N = bars.length;
-  if (N < look + 2) return null;
-  const s = N - look;
+  if (N < look + 10) return null;
+  const s = N - look, a = atrArr[N - 1];
   let iLo = s, iHi = s;
   for (let i = s; i < N; i++) { if (bars[i].l < bars[iLo].l) iLo = i; if (bars[i].h > bars[iHi].h) iHi = i; }
-  const a = atrArr[N - 1];
   if (isNaN(a) || bars[iHi].h - bars[iLo].l < 2 * a) return null;
-  const bear = iLo < iHi && iHi >= N - 3, bull = iHi < iLo && iLo >= N - 3;
-  if (!bear && !bull) return null;
-  const from = bear ? iLo : iHi;
-  let iV = from;
-  for (let i = from; i < N; i++) if (bars[i].v > bars[iV].v) iV = i;
-  if (iV >= N - 3) return null;
-  const xs = [], ys = [];
-  for (let i = iV; i < N; i++) { xs.push(i); ys.push(bars[i].v); }
-  const mx = xs.reduce((p, c) => p + c, 0) / xs.length, my = ys.reduce((p, c) => p + c, 0) / ys.length;
-  let num = 0, den = 0;
-  xs.forEach((x, k) => { num += (x - mx) * (ys[k] - my); den += (x - mx) ** 2; });
-  const third = ys.slice(Math.floor(ys.length * 2 / 3)), avgT = third.reduce((p, c) => p + c, 0) / third.length;
-  if (num / den >= 0 || avgT >= 0.6 * bars[iV].v) return null;
-  return { a: iV, b: N - 1, bear, live: true };
+  const vAt = i => { let t = 0, n = 0; for (let k = Math.max(0, i - 2); k <= Math.min(N - 1, i + 2); k++) { t += bars[k].v; n++; } return t / n; };
+  const avg = (x, y) => { let t = 0; for (let k = x; k <= y; k++) t += bars[k].v; return t / (y - x + 1); };
+  const notRising = avg(N - 3, N - 1) <= avg(N - 6, N - 4);
+  const bear = iLo < iHi && iHi >= N - 5, bull = iHi < iLo && iLo >= N - 5;
+  if (!(bear || bull) || !notRising) return null;
+  // a láb előző csúcsa / alja (a mostani lökés előtt)
+  const from = bear ? iLo : iHi, to = N - 6;
+  if (to - from < 3) return null;
+  let j = from;
+  for (let i = from; i <= to; i++) if (bear ? bars[i].h > bars[j].h : bars[i].l < bars[j].l) j = i;
+  const k = bear ? iHi : iLo;
+  if (k - j < 4) return null;
+  if (bear ? bars[k].h <= bars[j].h : bars[k].l >= bars[j].l) return null;
+  if (vAt(k) >= 0.7 * vAt(j)) return null;
+  return { a: j, b: k, bear, live: true };
 }
 
 export function volDivergence(bars, len = 5, keep = 6, atrArr = null) {
