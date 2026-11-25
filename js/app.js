@@ -12,6 +12,7 @@ import { runEngine, LAYERS } from "./engine/index.js";
 const layers = Object.fromEntries(LAYERS.map(l => [l.key, getPref("layer." + l.key, l.def)]));
 
 const LWC = window.LightweightCharts;
+const HISTORY_BARS = 5000;   // ennyi gyertya előzményt tölt vissza a háttérben (1D alatt)
 
 export const INSTRUMENTS = {
   HYPE: { instId: "HYPE-USD_UM_XPERP-310523", name: "HYPEUSD UM X-Perp (2031 máj.)", short: "HYPE", tick: 0.001 },
@@ -81,7 +82,11 @@ class DataSet {
   // egyben, hogy a chart ne ugráljon. A letöltött adat a gyorsítótárba kerül.
   async backfill() {
     if (!this.bars.length) return;
-    const need = milanaHistoryFrom(Date.now(), BARS[this.tf].sec);
+    // legalább HISTORY_BARS gyertya (mint a TradingView ingyenes csomagja), hogy a régi, még nyitott
+    // rések és szintek is meglegyenek; és a Milana heti nyitása is benne legyen
+    const sec = BARS[this.tf].sec;
+    const need = sec >= 86400 ? -Infinity : Math.min(milanaHistoryFrom(Date.now(), sec), Date.now() - HISTORY_BARS * sec * 1000);
+    if (!isFinite(need)) return;
     if (!(this.bars[0].t > need)) return;
     while (this.loadingOlder) await new Promise(r => setTimeout(r, 200));
     this.loadingOlder = true;
@@ -156,8 +161,13 @@ class DataSet {
     if (bar.t < last.t) return;
     if (bar.t === last.t) this.bars[this.bars.length - 1] = bar; else this.bars.push(bar);
     if (this.dailyDay !== undefined && Math.floor(Date.now() / 86400000) !== this.dailyDay) { this.dailyDay = undefined; this.loadDaily(); }
-    this.compute();
+    // élő árnál a motor legfeljebb 3×/mp számol (a gyertya azonnal frissül), gyertyazáráskor azonnal
     for (const p of this.panels) p.update(bar);
+    const now = performance.now();
+    clearTimeout(this.cTimer);
+    const run = () => { this.lastCompute = performance.now(); this.compute(); for (const p of this.panels) p.repaint(); };
+    if (bar.done || !this.lastCompute || now - this.lastCompute > 330) run();
+    else this.cTimer = setTimeout(run, 330 - (now - this.lastCompute));
     if (bar.done) this.save();
   }
   async refreshLatest() {
@@ -270,6 +280,11 @@ class ChartPanel {
     if (this.volume) this.volume.update({ time: chartTime(b.t), value: b.v, color: (b.c >= b.o ? UP : DOWN) + "66" });
     this.layer.refresh();
     this.setTitle();
+  }
+  repaint() {                         // a motor új eredménye: CRT szín az utolsó gyertyán + rajzok
+    const bc = this.ds ? this.ds.barColors : null, bars = this.ds ? this.ds.bars : [];
+    if (bc && bars.length) this.candles.update(candlePoint(bars[bars.length - 1], bc[bc.length - 1]));
+    this.layer.refresh();
   }
   setTitle() {
     const bars = this.ds ? this.ds.bars : [];
