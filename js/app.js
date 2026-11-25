@@ -130,7 +130,9 @@ class DataSet {
   }
   compute() {
     const items = [];
-    items.push(...runEngine({ bars: this.bars, barSec: BARS[this.tf].sec, daily: this.daily, layers }).items);
+    const r = runEngine({ bars: this.bars, barSec: BARS[this.tf].sec, daily: this.daily, layers });
+    items.push(...r.items);
+    this.barColors = r.barColors;
     this.scene = { items };
   }
   emitReset(shift = 0) { this.compute(); for (const p of this.panels) p.reset(shift); }
@@ -200,6 +202,14 @@ feed.onReconnect = () => hub.sets.forEach(ds => ds.refreshLatest());
 document.addEventListener("visibilitychange", () => { if (!document.hidden) hub.sets.forEach(ds => ds.refreshLatest()); });
 
 // ── Egy chart-panel ──
+// Gyertya pont: a régi (Hyperliquid) szakasz halványan, a CRT gyertyák színezve (mint a szezsoT barcolor).
+function candlePoint(b, crt) {
+  const d = { time: chartTime(b.t), open: b.o, high: b.h, low: b.l, close: b.c };
+  if (crt) { d.color = crt; d.borderColor = crt; d.wickColor = crt; }
+  if (b.ext) { const c = (crt || (b.c >= b.o ? UP : DOWN)) + "59"; d.color = c; d.borderColor = c; d.wickColor = c; }
+  return d;
+}
+
 class ChartPanel {
   constructor(el, key, account, small) {
     this.el = el; this.key = key; this.inst = INSTRUMENTS[key]; this.account = account; this.small = small;
@@ -242,11 +252,8 @@ class ChartPanel {
     const bars = this.ds ? this.ds.bars : [];
     const ts = this.chart.timeScale();
     const r = ts.getVisibleLogicalRange();
-    this.candles.setData(bars.map(b => {
-      const d = { time: chartTime(b.t), open: b.o, high: b.h, low: b.l, close: b.c };
-      if (b.ext) { const c = (b.c >= b.o ? UP : DOWN) + "59"; d.color = c; d.borderColor = c; d.wickColor = c; }
-      return d;
-    }));
+    const bc = this.ds ? this.ds.barColors : null;
+    this.candles.setData(bars.map((b, i) => candlePoint(b, bc && bc[i])));
     if (this.volume) this.volume.setData(bars.map(b => b.ext ? { time: chartTime(b.t) } :
       { time: chartTime(b.t), value: b.v, color: (b.c >= b.o ? UP : DOWN) + "66" }));
     if (bars.length && this.first) {
@@ -258,7 +265,8 @@ class ChartPanel {
     this.setTitle();
   }
   update(b) {
-    this.candles.update({ time: chartTime(b.t), open: b.o, high: b.h, low: b.l, close: b.c });
+    const bc = this.ds ? this.ds.barColors : null;
+    this.candles.update(candlePoint(b, bc && bc[bc.length - 1]));
     if (this.volume) this.volume.update({ time: chartTime(b.t), value: b.v, color: (b.c >= b.o ? UP : DOWN) + "66" });
     this.layer.refresh();
     this.setTitle();
