@@ -131,7 +131,7 @@ export class SceneLayer {
     const x = this.x(it.t), y = this.y(it.p);
     if (x === null || y === null) return;
     ctx.save();
-    const size = Math.max(MIN_FONT, it.size || MIN_FONT);
+    const size = Math.max(it.minSize || MIN_FONT, it.size || MIN_FONT);   // minSize: kifejezett kérésre kisebb (pl. EGYEZÉS 10)
     ctx.font = `${it.bold ? "600 " : ""}${size}px system-ui, sans-serif`;
     const lines = String(it.text).split("\n");
     const w = Math.max(...lines.map(s => ctx.measureText(s).width)), lh = size * 1.25, h = lh * lines.length;

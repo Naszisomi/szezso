@@ -14,6 +14,7 @@ import { supertrend } from "./st.js";
 import { allPatterns } from "./patterns.js";
 import { wyckoff } from "./wyckoff.js";
 import { weeklyProfile } from "./weekly.js";
+import { confluence, confluenceLayer } from "./confluence.js";
 import { dgtMove, mostTouched, premiumDiscount, goldenPocketZones, elliott, oteAbc, pois, angleStructure } from "./struct2.js";
 import { tgif, tgifLayer, volDivergence, volDivLayer } from "./extra.js";
 
@@ -26,6 +27,7 @@ export const LAYERS = [
   { key: "fib",    label: "Auto Fib",  def: false },
   { key: "tgif",   label: "TGIF",      def: true },
   { key: "voldiv", label: "Vol. div.", def: true },
+  { key: "cf",     label: "Egyezés",   def: true },
 ];
 
 // input: { bars, barSec, daily, layers:{kz:true,...} } -> { items, ctx, barColors }
@@ -60,14 +62,36 @@ export function runEngine({ bars, barSec, daily, layers, tick }) {
   ctx.pat = allPatterns(bars);
   ctx.wy = wyckoff(bars);
   ctx.week = weeklyProfile(bars, barSec, ny);
+  ctx.dwm = dwmLevels(daily, now);
+  const milItems = milana(bars, barSec, MILANA_DEFAULTS).items;
+  ctx.cf = confluence(bars, ctx, milItems);
 
   if (layers.kz) items.push(...kzLayer(bars, barSec, ny, sessions, daily, KZ_DEFAULTS));
-  if (layers.milana) items.push(...milana(bars, barSec, MILANA_DEFAULTS).items);
+  if (layers.milana) items.push(...milItems);
   if (layers.gaps) items.push(...gapLayer(bars, barSec, gaps));
   if (layers.vp) items.push(...vpArrowLayer(bars, vp));
   if (layers.fib) items.push(...fibLayer(bars, barSec, ctx.fib));
   if (layers.tgif) items.push(...tgifLayer(bars, barSec, ctx.tgif));
   if (layers.voldiv) items.push(...volDivLayer(bars, ctx.voldiv));
+  if (layers.cf) items.push(...confluenceLayer(bars, barSec, ctx.cf));
   const barColors = layers.crt ? crtColors(bars) : null;
   return { items, ctx, barColors };
+}
+
+// előző nap / hét / hónap H, L, közép és a nap/hét nyitója a napi gyertyákból (UTC), az EGYEZÉS-hez
+function dwmLevels(daily, now) {
+  if (!daily || !daily.length) return [];
+  const out = [], d0 = new Date(now);
+  const dayS = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), d0.getUTCDate());
+  const wkS = dayS - ((d0.getUTCDay() + 6) % 7) * 86400000, moS = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), 1);
+  const prevMo = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() - 1, 1);
+  for (const [a, b] of [[dayS - 86400000, dayS], [wkS - 7 * 86400000, wkS], [prevMo, moS]]) {
+    let h = -Infinity, l = Infinity;
+    for (const x of daily) if (x.t >= a && x.t < b) { h = Math.max(h, x.h); l = Math.min(l, x.l); }
+    if (isFinite(h)) out.push(h, l, (h + l) / 2);
+  }
+  const dOpen = daily.find(x => x.t === dayS), wOpen = daily.find(x => x.t === wkS);
+  if (dOpen) out.push(dOpen.o);
+  if (wOpen) out.push(wOpen.o);
+  return out;
 }
