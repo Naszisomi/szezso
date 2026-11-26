@@ -106,3 +106,29 @@ function dwmLevels(daily, now) {
   if (wOpen) out.push(wOpen.o);
   return out;
 }
+
+// az adatfülhöz: a számított állapot kis, átküldhető összefoglalója
+export function ctxInfo(ctx, bars) {
+  if (!ctx) return null;
+  const now = bars[bars.length - 1].t, o = ctx.osc || {};
+  const top = ctx.nr && ctx.nr.scenarios && ctx.nr.scenarios[0];
+  let dir = top && top.dir && top.id !== 4 ? top.dir : 0, src = top && dir ? "ICT-forgatókönyv" : "";
+  if (!dir && ctx.week && ctx.week.list && ctx.week.list[0]) { dir = ctx.week.list[0].dir; src = "heti profil"; }
+  if (!dir && ctx.st) { dir = ctx.st.trend; src = "Supertrend"; }
+  const close = bars[bars.length - 1].c;
+  const tgts = [top && top.dir === dir ? top.target : null, ...((ctx.cf && ctx.cf.forecast) || []).map(f => f.p), ctx.wy && ctx.wy.dir === dir ? ctx.wy.target : null]
+    .filter(x => x != null && isFinite(x) && (dir > 0 ? x > close : x < close)).sort((a, b) => Math.abs(a - close) - Math.abs(b - close));
+  return JSON.parse(JSON.stringify({
+    t: now, close, bias: { dir, src, target: tgts[0] ?? null },
+    nr: ctx.nr, nrPast: ctx.nrPast || [],
+    forecast: (ctx.cf && ctx.cf.forecast) || [],
+    week: ctx.week && ctx.week.list ? ctx.week.list.slice(0, 3) : [],
+    st: ctx.st ? { trend: ctx.st.trend, line: ctx.st.line } : null,
+    osc: { rsi: o.rsi, rsiState: o.rsiState, k: o.k, d: o.d, j: o.j, ema: o.ema },
+    wy: ctx.wy, pd: ctx.pd && ctx.pd.sr,
+    gannNow: ctx.gannNow, gannYear: ctx.gannYear,
+    gann: (ctx.gann || []).filter(e => e.t2 >= now).slice(0, 6),
+    voldiv: (ctx.voldiv || []).slice(-1).map(v => ({ bear: v.bear, t: bars[v.b] ? bars[v.b].t : null })),
+  }));
+}
+

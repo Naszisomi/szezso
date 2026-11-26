@@ -8,6 +8,7 @@ import { SceneLayer } from "./draw.js";
 import { milanaHistoryFrom } from "./ind/milana.js";
 import { runEngine, LAYERS } from "./engine/index.js";
 import { PlanManager } from "./plans.js";
+import { renderData, biasText } from "./dataview.js";
 
 // Rétegek ki-be kapcsolása (a részletes beállítások az 5. lépésben jönnek)
 const layers = Object.fromEntries(LAYERS.map(l => [l.key, getPref("layer." + l.key, l.def)]));
@@ -28,6 +29,7 @@ const TABS = [
   { id: "ETH", label: "ETH", layout: "single", cells: [["ETH", null]] },
   { id: "6HYPE", label: "6×HYPE", layout: "six", cells: ACCOUNTS.map(a => ["HYPE", a]) },
   { id: "TRIO", label: "HYPE·BTC·ETH", layout: "three", cells: [["HYPE", null], ["BTC", null], ["ETH", null]] },
+  ...["HYPE", "BTC", "ETH"].map(k => ({ id: "d" + k, label: k + " adat", layout: "data", key: k, cells: [] })),
 ];
 const UP = "#089981", DOWN = "#F23645";
 
@@ -64,7 +66,7 @@ const engine = (() => {
       cbs.set(msg.id, cb);
       if (w) { w.postMessage(msg); return; }
       // tartalék: ha nincs Worker, a fő szálon számol
-      import("./engine/index.js").then(({ runEngine }) => {
+      import("./engine/index.js").then(({ runEngine, ctxInfo }) => {
         const st = (this._st ||= new Map()), s0 = st.get(msg.id) || { bars: [], daily: null };
         if (msg.bars) s0.bars = msg.bars;
         if (msg.tail) for (const b of msg.tail) { const l = s0.bars[s0.bars.length - 1]; if (l && l.t === b.t) s0.bars[s0.bars.length - 1] = b; else if (!l || b.t > l.t) s0.bars.push(b); }
@@ -73,7 +75,7 @@ const engine = (() => {
         const r = runEngine({ bars: s0.bars, barSec: msg.barSec, daily: s0.daily, layers: msg.layers, tick: msg.tick, plan: msg.plan, minGap: msg.minGap });
         const codes = new Uint8Array(r.barColors ? s0.bars.length : 0);
         if (r.barColors) r.barColors.forEach((c, i) => { codes[i] = c === "#FFEB3B" ? 1 : c === "#9C27B0" ? 2 : 0; });
-        cb({ id: msg.id, seq: msg.seq, items: r.items, plans: r.ctx && r.ctx.plans, codes, hasColors: !!r.barColors, t0: s0.bars.length ? s0.bars[0].t : 0 });
+        cb({ id: msg.id, seq: msg.seq, items: r.items, plans: r.ctx && r.ctx.plans, info: msg.info ? ctxInfo(r.ctx, s0.bars) : null, codes, hasColors: !!r.barColors, t0: s0.bars.length ? s0.bars[0].t : 0 });
       });
     },
     drop(id) { cbs.delete(id); if (this._st) this._st.delete(id); if (w) w.postMessage({ id, drop: true }); },
@@ -303,8 +305,14 @@ class DataSet {
 let plansVer = 0;
 const plans = new PlanManager({
   engine, fetchLatest, fetchOlder, merge, loadCandles, insts: INSTRUMENTS,
-  onChange: key => { plansVer++; for (const ds of hub.sets.values()) if (ds.key === key && !ds.dead) { ds.mergeScene(); for (const p of ds.panels) p.applyResult(false); } },
+  onChange: key => {
+    plansVer++;
+    for (const ds of hub.sets.values()) if (ds.key === key && !ds.dead) { ds.mergeScene(); for (const p of ds.panels) { p.applyResult(false); p.setTitle(); } }
+    const v = views.get("d" + key);
+    if (v && current === "d" + key) renderData(v.el, key, INSTRUMENTS[key], plans);
+  },
 });
+plans.rsiTf = getPref("rsiTf", "1h");
 window.szezsoPlans = plans;   // az adatfülhöz és hibakereséshez
 setTimeout(() => { window.szezsoHub = hub; });
 
@@ -453,8 +461,10 @@ class ChartPanel {
     const last = bars[bars.length - 1];
     const acc = this.account ? `<span class="acc">${this.account}</span> ` : "";
     const name = this.small ? this.inst.short : this.inst.name;
+    const pd = this.showBias && plans.data.get(this.key), bias = pd && pd.info ? biasText(pd.info, x => (+x).toFixed(decimals(this.inst.tick))) : "";
     this.titleEl.innerHTML = `${acc}<b>${name}</b> · ${hub.tf}` +
-      (last ? ` · <span style="color:${last.c >= last.o ? UP : DOWN}">${last.c.toFixed(decimals(this.inst.tick))}</span>` : "");
+      (last ? ` · <span style="color:${last.c >= last.o ? UP : DOWN}">${last.c.toFixed(decimals(this.inst.tick))}</span>` : "") +
+      (bias ? ` · <b style="color:${pd.info.bias.dir > 0 ? UP : DOWN}">${bias}</b>` : "");
   }
 }
 
@@ -467,13 +477,16 @@ function buildView(tab) {
   const el = document.createElement("div");
   el.className = "view " + tab.layout;
   document.getElementById("views").appendChild(el);
+  if (tab.layout === "data") { plans.watch(tab.key); return { el, panels: [], key: tab.key }; }
   const small = tab.layout !== "single";
   const panels = tab.cells.map(([key, acc], i) => {
     const cell = document.createElement("div");
     cell.className = "cell c" + i;
     el.appendChild(cell);
     // a 3-as elrendezésben a HYPE nagy chart, volumennel
-    return new ChartPanel(cell, key, acc, small && !(tab.layout === "three" && i === 0));
+    const p = new ChartPanel(cell, key, acc, small && !(tab.layout === "three" && i === 0));
+    p.showBias = tab.layout === "three";      // a hármas charton: „Bull – célár: …”
+    return p;
   });
   return { el, panels };
 }
@@ -483,7 +496,9 @@ function showTab(id) {
   const tab = TABS.find(t => t.id === id);
   if (!views.has(id)) views.set(id, buildView(tab));
   for (const [vid, v] of views) v.el.style.display = vid === id ? "" : "none";
-  for (const p of views.get(id).panels) p.attach(hub.get(p.key));
+  const v = views.get(id);
+  for (const p of v.panels) p.attach(hub.get(p.key));
+  if (tab.layout === "data") renderData(v.el, tab.key, INSTRUMENTS[tab.key], plans);
   buildTabs();
 }
 
@@ -517,6 +532,11 @@ function buildLayerButtons() {
     };
     box.appendChild(b);
   }
+  // az RSI-zárási jel idősíkja (a javaslat TP-inél)
+  const r = document.createElement("button");
+  r.textContent = "RSI-jel: " + plans.rsiTf; r.className = layers.plan ? "on" : "";
+  r.onclick = () => { const o = ["15m", "1h", "4h"], n = o[(o.indexOf(plans.rsiTf) + 1) % o.length]; setPref("rsiTf", n); plans.setRsiTf(n); buildLayerButtons(); };
+  box.appendChild(r);
 }
 function buildTabs() {
   const box = document.getElementById("tabs");

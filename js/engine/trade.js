@@ -11,6 +11,7 @@ export { UNITS };
 
 function strategic(ctx, milItems) {
   const mil = (milItems || []).filter(it => it.type === "label" && /^(TLO|TNY|NYAM|TPM|TDO|TAO|TWO)$/.test(it.text)).map(it => ({ p: it.p, why: it.text }));
+  for (const it of milItems || []) if (it.type === "box" && /FVG/.test(it.text || "")) mil.push({ p: it.p1, why: "Milana " + it.text }, { p: it.p2, why: "Milana " + it.text });
   const kz = [];
   for (const [k, l] of Object.entries(ctx.sessions || {})) {
     const s = l[l.length - 1];
