@@ -8,6 +8,8 @@
 //  { type:"label", t,p, text, color, bg, size, align:"left"|"center"|"right", vAlign:"middle"|"above"|"below" }
 //  { type:"poly",  points:[{t,p}], color, width, style, arrow:false }
 //  { type:"vline", t, color, width, style }   – függőleges vonal a panel teljes magasságában
+//  { type:"hline", p, t1?, color, width, style } – vízszintes vonal a teljes szélességben (t1-gyel: sugár jobbra)
+//  { type:"dot",   t,p, r, color, fill }          – kör képpontban (a rajzok fogópontjai)
 // A feliratok legkisebb mérete 12 px (ne legyen „hangyányi”).
 
 export function rgba(hex, transp = 0) {          // transp: 0..100, mint a Pine-ban
@@ -63,7 +65,7 @@ export class SceneLayer {
     target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
       // a szétválogatás jelenetenként egyszer (nem minden képkockánál)
       if (!scene._sorted) {
-        const order = { box: 0, vline: 1, line: 1, poly: 2, label: 3 };
+        const order = { box: 0, vline: 1, line: 1, hline: 1, poly: 2, label: 3, dot: 4 };
         const isBack = it => it.type === "box" || it.type === "vline";
         const all = [...scene.items].sort((a, b) => order[a.type] - order[b.type]);
         scene._sorted = { back: all.filter(isBack), front: all.filter(it => !isBack(it)) };
@@ -82,6 +84,29 @@ export class SceneLayer {
     ctx.strokeStyle = it.color; ctx.lineWidth = it.width || 1; ctx.setLineDash(DASH[it.style || "solid"]);
     ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
     if (it.arrow) this.arrowHead(ctx, x1, y1, x2, y2, it.color, it.width || 1);
+    ctx.restore();
+  }
+
+  hline(ctx, it, size) {
+    const y = this.y(it.p), x0 = it.t1 != null ? this.x(it.t1) : 0;
+    if (y === null || x0 === null) return;
+    ctx.save();
+    ctx.strokeStyle = it.color; ctx.lineWidth = it.width || 1; ctx.setLineDash(DASH[it.style || "solid"]);
+    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(size.width, y); ctx.stroke();
+    if (it.text) {
+      ctx.font = `${MIN_FONT}px system-ui, sans-serif`; ctx.fillStyle = it.color; ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+      ctx.fillText(it.text, size.width - 6, y - 3);
+    }
+    ctx.restore();
+  }
+
+  dot(ctx, it) {
+    const x = this.x(it.t), y = this.y(it.p);
+    if (x === null || y === null) return;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x, y, it.r || 6, 0, Math.PI * 2);
+    ctx.fillStyle = it.fill || "#fff"; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = it.color || "#2962FF"; ctx.setLineDash([]); ctx.stroke();
     ctx.restore();
   }
 

@@ -1,5 +1,6 @@
 // Adatfül (HYPE / BTC / BNB adatok): a napi tervek számlánként, az előző napok, az ICT-forgatókönyvek és
 // -értékelések, az indikátorok és a Gann-naptár – szövegesen, hogy a chart tiszta maradhasson.
+import { arrowPlans } from "./drawings.js";
 const fmtT = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 const fmtD = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "short", day: "numeric" });
 const STATE = { "vár": "vár", "aktív": "aktív", "részben": "részben zárva", "védett": "pozitív stoppal", "lezárva": "lezárva", "lejárt": "lejárt" };
@@ -39,6 +40,17 @@ export function renderData(el, key, inst, plans) {
         `<td>${Object.entries(cnt).map(([k, v]) => `${v} ${esc(STATE[k] || k)}`).join(", ")}</td><td>${money(net, sim)}</td></tr>`);
     }
     out.push(`</table>`);
+  }
+
+  // a rajzolt nyilak értelmezése (az elemzésed): 1. nyíl vége = entry, a többi = DCA
+  const ap = arrowPlans(key, Date.now() - 4 * 86400000);
+  if (ap.long.length || ap.short.length) {
+    out.push(`<h3>A rajzod szerint (nyilak, utolsó 4 nap)</h3><p class="muted">A lefelé mutató nyíl vége long belépő, a felfelé mutatóé short; az első a belépő, a többi a DCA. Mellette a terv legközelebbi szintje (1%-on belül).</p>`);
+    const lv = hist[0] ? [...(hist.find(r => r.plan.dir > 0) || hist[0]).plan.levels, ...(hist.find(r => r.plan.dir < 0) || hist[0]).plan.levels] : [];
+    const near = x => { const l = lv.filter(v => Math.abs(v.p - x) <= x * 0.01).sort((a, b) => Math.abs(a.p - x) - Math.abs(b.p - x))[0]; return l ? `${f(l.p)} – ${esc(l.why)}` : "–"; };
+    const rows = [];
+    for (const [k, side, cls2] of [["long", "LONG", "up"], ["short", "SHORT", "dn"]]) ap[k].forEach((a, i) => rows.push(`<tr><td class="${cls2}">${side}</td><td>${i ? "DCA" + i : "entry"}</td><td>${f(a.p)}</td><td>${near(a.p)}</td></tr>`));
+    out.push(`<table><tr><th>Irány</th><th>Láb</th><th>A nyíl vége</th><th>Legközelebbi szint</th></tr>${rows.join("")}</table>`);
   }
 
   // ICT

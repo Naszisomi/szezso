@@ -11,6 +11,7 @@ import { runEngine, LAYERS } from "./engine/index.js";
 import { PlanManager } from "./plans.js";
 import { renderData, biasText } from "./dataview.js";
 import { renderPaper } from "./paperview.js";
+import { DrawController, drawItems, drawState, buildDrawBar } from "./drawings.js";
 
 // Rétegek ki-be kapcsolása (a részletes beállítások az 5. lépésben jönnek)
 const layers = Object.fromEntries(LAYERS.map(l => [l.key, getPref("layer." + l.key, l.def)]));
@@ -386,6 +387,10 @@ class ChartPanel {
     }
     this.layer = new SceneLayer(() => this.ds ? this.ds.bars : [], () => this.ds ? this.panelScene() : null, () => BARS[hub.tf].sec);
     this.candles.attachPrimitive(this.layer);
+    // saját rajzok (külön réteg, a motor rajzai fölött)
+    this.drawLayer = new SceneLayer(() => this.ds ? this.ds.bars : [], () => ({ items: drawItems(this.key, this.drawDraft) }), () => BARS[hub.tf].sec);
+    this.candles.attachPrimitive(this.drawLayer);
+    this.draw = new DrawController(this);
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(r => { if (r && r.from < 30 && this.ds) this.ds.loadOlder(); this.scheduleHL(); });
     // a látható szakasz csúcsa és alja az ártengelyen (mint a TradingView-n)
     const hl = title => this.candles.createPriceLine({ price: 0, title, color: "#787B86", lineVisible: false, axisLabelVisible: false,
@@ -396,6 +401,7 @@ class ChartPanel {
     el.appendChild(this.titleEl);
     this.first = true;
   }
+  barSec() { return BARS[hub.tf].sec; }
   attach(ds) {
     if (this.ds === ds) return;
     if (this.ds) this.ds.panels.delete(this);
@@ -533,6 +539,26 @@ function buildTfButtons() {
     box.appendChild(b);
   }
 }
+// rajzeszközsor: a „Rajz” gombbal nyitható; változáskor minden panel rajzrétege frissül
+function allPanels() { return [...views.values()].flatMap(v => v.panels); }
+drawState.listeners.add(() => {
+  for (const p of allPanels()) { p.drawLayer.refresh(); }
+  buildDrawButtons();
+});
+function buildDrawButtons() {
+  const box = document.getElementById("drawbar");
+  if (!box) return;
+  const open = getPref("drawOpen", false);
+  box.innerHTML = "";
+  const tog = document.createElement("button");
+  tog.className = "tog"; tog.textContent = open ? "Rajz ▴" : "✏️ Rajz";
+  tog.onclick = () => { setPref("drawOpen", !open); if (open) { drawState.tool = "select"; } buildDrawButtons(); window.dispatchEvent(new Event("resize")); };
+  box.appendChild(tog);
+  if (!open) return;
+  const inner = document.createElement("span"); inner.className = "group";
+  box.appendChild(inner);
+  buildDrawBar(inner, () => allPanels().map(p => p.draw));
+}
 function buildLayerButtons() {
   const box = document.getElementById("layers");
   box.innerHTML = "";
@@ -583,6 +609,7 @@ async function resolveInsts() {
 window.addEventListener("DOMContentLoaded", async () => {
   buildTfButtons();
   buildLayerButtons();
+  buildDrawButtons();
   await Promise.race([resolveInsts(), new Promise(r => setTimeout(r, 4000))]);
   showTab(current);
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});

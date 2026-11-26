@@ -22,6 +22,7 @@ export function renderPaper(el, plans, key, rerender) {
   const unreal = open.reduce((s, t) => s + t.dir * (last - t.avg) * t.open, 0);
   const margin = open.reduce((s, t) => s + t.avg * t.open / 10, 0);
   const o = [];
+  o.push(`<p style="float:right"><button data-export="1">⇩ Export (elemzéshez)</button></p>`);
   o.push(`<h2>Papírkereskedés – HYPE</h2><p class="muted">A rendszer szabályai szerint, automatikusan (a 15 perces gyertyákon végigjátszva). Kezdés: ${sim.days[0] ? fmtT.format(sim.days[0].T) : "–"}.</p>`);
   o.push(`<div class="ptabs">${["Összes", ...ACC_NAMES].map(a => `<button data-acc="${a}" class="${a === acc ? "on" : ""}">${a}</button>`).join("")}</div>`);
   o.push(`<div class="cards">` + [
@@ -74,6 +75,8 @@ export function renderPaper(el, plans, key, rerender) {
   el.innerHTML = o.join("");
   el.querySelectorAll("[data-acc]").forEach(b => b.onclick = () => { acc = b.dataset.acc; rerender(); });
   el.querySelectorAll("[data-sub]").forEach(b => b.onclick = () => { sub = b.dataset.sub; rerender(); });
+  const ex = el.querySelector("[data-export]");
+  if (ex) ex.onclick = () => exportAll(plans);
   const sv = el.querySelector("[data-save]");
   if (sv) sv.onclick = () => {
     const nb = {}; el.querySelectorAll("[data-bal]").forEach(i => nb[i.dataset.bal] = Math.max(0, +i.value || DEFAULT_BAL));
@@ -101,3 +104,25 @@ function spark(pts, start) {
     <text x="4" y="${Y(lo) + 4}" font-size="11" fill="#555">${lo.toFixed(0)} $</text>
     <text x="${W - 10}" y="${Hh - 4}" font-size="11" text-anchor="end" fill="#555">${(ys[ys.length - 1] / start * 100).toFixed(2)}%</text></svg>`;
 }
+
+// minden adat egy fájlba (ezt lehet csatolni a beszélgetésbe elemzéshez): tervek, kereskedések, események, rajzok
+function exportAll(plans) {
+  const out = { exported: new Date().toISOString(), app: "szezso", balances: plans.balances(), instruments: {} };
+  for (const key of plans.data.keys()) {
+    const s = plans.sim(key), st = plans.store(key);
+    out.instruments[key] = {
+      days: st.days,
+      trades: s ? s.trades.map(t => { const { plan, ...rest } = t; return { ...rest, planDay: t.day, planDir: plan.dir }; }) : [],
+      events: s ? s.events : [],
+      last: s && s.last,
+      drawings: (() => { try { return JSON.parse(localStorage.getItem("szezso.draw." + key)) || []; } catch { return []; } })(),
+    };
+  }
+  const blob = new Blob([JSON.stringify(out)], { type: "application/json" });
+  const a = document.createElement("a"), d = new Date();
+  a.href = URL.createObjectURL(blob);
+  a.download = `szezso-export-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}.json`;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+
