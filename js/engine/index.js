@@ -129,6 +129,31 @@ export function ctxInfo(ctx, bars) {
     gannNow: ctx.gannNow, gannYear: ctx.gannYear,
     gann: (ctx.gann || []).filter(e => e.t2 >= now).slice(0, 6),
     voldiv: (ctx.voldiv || []).slice(-1).map(v => ({ bear: v.bear, t: bars[v.b] ? bars[v.b].t : null })),
+    cf: ((ctx.cf && ctx.cf.all) || []).map(g => ({ p: g.p, n: g.n, codes: g.codes })),
+    nyrev: nyReversal(ctx, bars),
   }));
+}
+
+// NY reversal jel: a NY AM killzone-ban (09:30–11:00 NY) egy nagy volumenű (≥ 2× átlag) gyertya kisöpör egy erős
+// (LIQ tényezős) egyezésvonalat és visszazár mögé; ha előtte ellenirányú volumen-divergencia volt, az megerősíti.
+function nyReversal(ctx, bars) {
+  const N = bars.length, ny = ctx.ny, lines = ((ctx.cf && ctx.cf.all) || []).filter(g => g.codes.includes("LIQ"));
+  if (!ny || !ny.min || !lines.length) return null;
+  const now = bars[N - 1].t;
+  for (let i = N - 1; i >= Math.max(20, N - 200); i--) {
+    if (now - bars[i].t > 16 * 3600000) break;
+    const m = ny.min[i];
+    if (!(m >= 570 && m < 660)) continue;
+    let av = 0; for (let k = i - 20; k < i; k++) av += bars[k].v; av /= 20;
+    const b = bars[i];
+    if (!(b.v >= 2 * av)) continue;
+    for (const g of lines) {
+      const dir = b.l < g.p && b.c > g.p ? 1 : b.h > g.p && b.c < g.p ? -1 : 0;
+      if (!dir) continue;
+      const vd = (ctx.voldiv || []).filter(v => bars[v.b] && b.t - bars[v.b].t < 24 * 3600000 && bars[v.b].t <= b.t).pop();
+      return { dir, t: b.t, line: g.p, n: g.n, codes: g.codes, vol: b.v / av, div: vd ? (vd.bear ? -1 : 1) === dir : false };
+    }
+  }
+  return null;
 }
 

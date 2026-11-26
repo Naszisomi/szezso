@@ -23,16 +23,24 @@ const DAY = 86400000, MAKER = 0.0002, TAKER = 0.0005;
 const SHARES = { full: [1, 0, 0, 0], split: [0.5, 0.3, 0.2, 0], swing: [0, 0.5, 0.3, 0.2] };
 
 // a rács helyei egy napi tervből: entry, majd mindig az előző DCA1-e, legalább `gap` lépéssel
+//  A DCA-hely ráhúzódik a közeli (HYPE: 1 $-on belüli) erős egyezésvonalra (4h vagy LIQ tényezővel), ha a lépés így is megvan.
 export function positions(p, n = 12) {
-  const d = p.dir, gap = p.gap || 3, out = [{ entry: p.entry, dca: p.dca }];
+  const d = p.dir, gap = p.gap || 3, snapD = gap / 3;
+  const strong = [...((p.cand && p.cand.h1 && p.cand.h1.cf) || []), ...((p.cand && p.cand.h4 && p.cand.h4.cf) || []), ...((p.cand && p.cand.m15 && p.cand.m15.cf) || [])].filter(strongCf);
+  const snap = (x, ref) => {
+    const c = strong.filter(g => Math.abs(g.p - x.p) <= snapD && (d > 0 ? g.p <= ref - gap : g.p >= ref + gap)).sort((a, b) => cfRank(b) - cfRank(a))[0];
+    return c ? { p: c.p, why: `EGYEZÉS ${c.n} (${c.codes.join("·")})` } : x;
+  };
   const pool = p.levels.filter(x => d > 0 ? x.p < p.entry.p : x.p > p.entry.p).sort((a, b) => d * (b.p - a.p));
-  while (out.length < n) {
-    const entry = out[out.length - 1].dca[0], dca = [];
+  const build = entry => {
+    const dca = [];
     let ref = entry.p;
-    for (const x of pool) { if (dca.length === 3) break; if (d > 0 ? x.p <= ref - gap : x.p >= ref + gap) { dca.push(x); ref = x.p; } }
-    while (dca.length < 3) { ref -= d * gap; dca.push({ p: ref, why: "min. távolság" }); }
-    out.push({ entry, dca });
-  }
+    for (const x of pool) { if (dca.length === 3) break; if (d > 0 ? x.p <= ref - gap : x.p >= ref + gap) { const y = snap(x, ref); dca.push(y); ref = y.p; } }
+    while (dca.length < 3) { const y = snap({ p: ref - d * gap, why: "min. távolság" }, ref); dca.push(y); ref = y.p; }
+    return dca;
+  };
+  const out = [{ entry: p.entry, dca: build(p.entry) }];
+  while (out.length < n) { const entry = out[out.length - 1].dca[0]; out.push({ entry, dca: build(entry) }); }
   return out;
 }
 
@@ -53,11 +61,22 @@ function targets(p, tf, d, ref) {
     out.push({ p: x, why });
   }
   for (const x of c.crt || []) if (d > 0 ? x > ref : x < ref) out.push({ p: x, why: `CRT ${tf}` });
+  for (const g of c.cf || []) if (d > 0 ? g.p > ref : g.p < ref) out.push({ p: g.p, why: `EGYEZÉS ${g.n} (${g.codes.join("·")})`, cf: cfRank(g) });
   if (tf === "m15") for (const x of p.levels) if (/^(TLO|TNY|NYAM|TPM|TDO|TAO|TWO)$|^Milana/.test(x.why || "") && (d > 0 ? x.p > ref : x.p < ref)) out.push(x);
   return out.sort((a, b) => d * (a.p - b.p));
 }
+// egyezésvonal ereje: a 4h és a LIQ tényező különösen erős (fordulópont), utána a tényezők száma
+function cfRank(g) { return g.n + (g.codes.includes("4h") ? 3 : 0) + (g.codes.includes("LIQ") ? 3 : 0); }
+export function strongCf(g) { return g.n >= 5 && (g.codes.includes("4h") || g.codes.includes("LIQ")); }
 function nearest(p, tf, d, from, step) {
-  const t = targets(p, tf, d, from)[0];
+  const all = targets(p, tf, d, from);
+  // a legközelebbi cél környékén (≈ 1 ATR) az egyezésvonal nyer (a legerősebb), és a TP 2 tickkel a vonal elé kerül
+  const win = Math.max(p.atr || 0, Math.abs(from) * 0.004);
+  let t = all[0];
+  if (t) {
+    const cf = all.filter(x => x.cf && d * (x.p - all[0].p) <= win).sort((a, b) => b.cf - a.cf)[0];
+    if (cf) t = { p: cf.p - d * 2 * (p.tick || 0), why: cf.why + " (2 tickkel előtte)" };
+  }
   const l = p.levels.filter(x => d > 0 ? x.p > from : x.p < from).sort((a, b) => d * (a.p - b.p))[0];
   // ha az idősík célja nagyon messze van (> 5%), a közelebbi stratégiai szint a tartalék
   if (t && !(l && d * (t.p - from) > Math.abs(from) * 0.05 && d * (l.p - from) < d * (t.p - from))) return t;
@@ -113,11 +132,11 @@ export function simulate(days, bars, cfg, now) {
     let prev = null;
     list.forEach((t, k) => {
       t.role = list.length === 1 ? "split" : k === 0 ? "full" : k === list.length - 1 ? "swing" : "split";
-      t.tps = tpSet(t.plan, t.avg, prev ? prev.tps[0].p : null, cfg.minTp2(t.avg)); t.shares = SHARES[t.role];
+      t.tps = tpSet(t.plan, t.avg, prev ? prev.tps[0].p : null, cfg.minTp2(t.avg, t.plan)); t.shares = SHARES[t.role];
       prev = t;
     });
-    for (const t of byDir[d]) if (t.lock && t.state === "aktív") t.tps = tpSet(t.plan, t.avg, null, cfg.minTp2(t.avg));
-    for (const t of byDir[d]) if (t.state === "vár") { t.tps = tpSet(t.plan, t.legs[0].p, null, cfg.minTp2(t.legs[0].p)); t.shares = SHARES.split; }
+    for (const t of byDir[d]) if (t.lock && t.state === "aktív") t.tps = tpSet(t.plan, t.avg, null, cfg.minTp2(t.avg, t.plan));
+    for (const t of byDir[d]) if (t.state === "vár") { t.tps = tpSet(t.plan, t.legs[0].p, null, cfg.minTp2(t.legs[0].p, t.plan)); t.shares = SHARES.split; }
   };
 
   // új megbízások a nap tervéből a szabad számlákra
@@ -147,8 +166,7 @@ export function simulate(days, bars, cfg, now) {
   const rollover = (day, price, T) => {
     for (const d of [1, -1]) {
       const p = d > 0 ? day.long : day.short;
-      for (const t of byDir[d]) if (t.lock && t.state === "aktív") t.tps = tpSet(t.plan, t.avg, null, cfg.minTp2(t.avg));
-    for (const t of byDir[d]) if (t.state === "vár") { t.state = "lejárt"; t.closeT = T; }
+      for (const t of byDir[d]) if (t.state === "vár") { t.state = "lejárt"; t.closeT = T; }
       byDir[d] = byDir[d].filter(t => t.state !== "lejárt");
       const open = byDir[d].filter(isOpen);
       if (open.length && p) {
@@ -159,7 +177,7 @@ export function simulate(days, bars, cfg, now) {
         for (const t of prof) if (!better.includes(t)) exit(t, t.open, price, T, "napváltás (Ázsia vége)", TAKER);
         better.sort((a, b) => d * (b.avg - a.avg));
         better.forEach((t, k) => {
-          if (k === 0) { t.plan = p; t.tps = tpSet(p, t.avg, null, cfg.minTp2(t.avg)); t.role = "full"; t.shares = SHARES.full; t.tpHit = []; t.lock = true; }
+          if (k === 0) { t.plan = p; t.tps = tpSet(p, t.avg, null, cfg.minTp2(t.avg, t.plan)); t.role = "full"; t.shares = SHARES.full; t.tpHit = []; t.lock = true; }
           else if (t.stop == null) { t.stop = t.avg * (1 + d * (MAKER + TAKER)); t.stopT = T; t.state = "védett"; }
         });
       }

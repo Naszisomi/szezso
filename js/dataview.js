@@ -65,6 +65,8 @@ export function renderData(el, key, inst, plans) {
     if (info.wy) rows.push(["Wyckoff", `${esc(info.wy.type)} · ${esc(info.wy.phase)} fázis${info.wy.events && info.wy.events.length ? " · " + esc(info.wy.events.join(", ")) : ""}${info.wy.target != null ? " · cél " + f(info.wy.target) : ""}`]);
     if (info.week && info.week.length) rows.push(["Heti profil", info.week.map(w => `${esc(w.name)} ${pct(w.p)}`).join("<br>")]);
     if (info.forecast && info.forecast.length) rows.push(["Várható ár", info.forecast.map(x => `${f(x.p)} (${esc(x.src)})`).join(", ")]);
+    const nr = d && d.info15 && d.info15.nyrev;
+    rows.push(["NY reversal jel (15m)", nr ? `<b class="${nr.dir > 0 ? "up" : "dn"}">${nr.dir > 0 ? "bull" : "bear"}</b> · ${fmtT.format(nr.t)} · kisöpört egyezésvonal ${f(nr.line)} (${esc(nr.codes.join("·"))}) · volumen ${nr.vol.toFixed(1)}×${nr.div ? " · volumen-divergencia megerősíti" : ""}` : "ma még nincs"]);
     if (info.voldiv && info.voldiv[0]) rows.push(["Volumen-divergencia (utolsó)", `${info.voldiv[0].bear ? "bear" : "bull"}${info.voldiv[0].t ? " · " + fmtT.format(info.voldiv[0].t) : ""}`]);
     if (rows.length) out.push(`<h3>Indikátorok</h3><table>${rows.map(([a, b]) => `<tr><th>${a}</th><td>${b}</td></tr>`).join("")}</table>`);
     const g = [];

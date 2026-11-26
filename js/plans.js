@@ -11,7 +11,7 @@ import { simulate, ACC_NAMES } from "./grid.js";
 import { saveCandles, getPref } from "./store.js";
 export { ACC_NAMES };
 
-const H = 3600000, DAY = 86400000, KEEP_DAYS = 30, TV = 3;
+const H = 3600000, DAY = 86400000, KEEP_DAYS = 30, TV = 4;
 const COL = { long: "#089981", short: "#F23645", done: "#9E9E9E", old: "#8D6E63", pos: "#2962FF" };   // long zöld, short piros, teljesült szürke, előző napi barna
 const fmtDay = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "short", day: "numeric" });
 export const DEFAULT_BAL = 17000;
@@ -80,15 +80,27 @@ export class PlanManager {
     d.daily = await this.fetchLatest(inst.instId, "1D");
   }
 
-  // TP-célok idősíkonként a terv idejében: TP1 15m, TP2 1h, TP3 4h, swing 1D
-  addGaps(key, p, T) {
+  // TP-célok idősíkonként a terv idejében: TP1 15m, TP2 1h, TP3 4h, swing 1D; mindegyikhez az idősík egyezésvonalai is
+  async addGaps(key, p, T) {
     const d = this.data.get(key);
     if (!p || p.tv === TV) return p;
     const ref = p.entry.p;
     p.cand = { m15: candidates(d.bars15, 900, T, ref), h1: candidates(d.bars, 3600, T, ref), h4: candidates(d.bars4, 14400, T, ref), d1: candidates(d.daily, 86400, T, ref) };
+    p.cand.m15.cf = await this.cfAt(key, d.bars15, 900, T);
+    p.cand.h4.cf = await this.cfAt(key, d.bars4, 14400, T);
+    p.cand.h1.cf = p.levels.filter(x => /^EGYEZÉS/.test(x.why || "")).map(x => { const m = /^EGYEZÉS (\d+) \((.*)\)/.exec(x.why) || []; return { p: x.p, n: +m[1] || 5, codes: (m[2] || "").split("·") }; });
+    p.tick = this.insts[key].tick; p.atr = (p.tpGap || 0) * 4;
     delete p.gapTps; delete p.gapTps2; delete p.crtTps;
     p.tv = TV;
     return p;
+  }
+  // egy idősík egyezésvonalai a T időpontban (a motorból)
+  cfAt(key, bars, sec, T) {
+    const inst = this.insts[key], b = bars.filter(x => x.t + sec * 1000 <= T).map(x => ({ ...x, done: true }));
+    if (b.length < 100) return Promise.resolve([]);
+    const id = "cf:" + key + ":" + sec + ":" + T + ":" + (++this.seq);
+    return new Promise(res => this.engine.send({ id, seq: 1, bars: b, daily: this.data.get(key).daily.filter(x => x.t < T), barSec: sec, layers: {}, tick: inst.tick, info: true },
+      r => { this.engine.drop(id); res((r && r.info && r.info.cf) || []); }));
   }
 
   run(key, T) {
@@ -98,20 +110,20 @@ export class PlanManager {
     const minGap = inst.short === "HYPE" ? 3 : bars[bars.length - 1].c * 0.05;
     const id = "plan:" + key + ":" + T + ":" + (++this.seq);
     return new Promise(res => this.engine.send({ id, seq: 1, bars, daily: d.daily.filter(x => x.t < T), barSec: 3600, layers: {}, tick: inst.tick, plan: true, minGap },
-      r => {
+      async r => {
         this.engine.drop(id);
         const pl = r && r.plans;
-        if (pl) for (const k of ["long", "short"]) if (pl[k]) { pl[k].gap = pl[k].gap || minGap; this.addGaps(key, pl[k], T); }
+        if (pl) for (const k of ["long", "short"]) if (pl[k]) { pl[k].gap = pl[k].gap || minGap; await this.addGaps(key, pl[k], T); }
         res(pl);
       }));
   }
 
   // az adatfülhöz: a motor összefoglalója az 1 órás adatokból (a mostani állapot)
-  info(key) {
-    const d = this.data.get(key), inst = this.insts[key];
-    if (d.bars.length < 200) return Promise.resolve(null);
-    const id = "info:" + key + ":" + (++this.seq), bars = d.bars.map((b, i) => i < d.bars.length - 1 ? { ...b, done: true } : b);
-    return new Promise(res => this.engine.send({ id, seq: 1, bars, daily: d.daily, barSec: 3600, layers: {}, tick: inst.tick, info: true },
+  info(key, src, sec = 3600) {
+    const d = this.data.get(key), inst = this.insts[key], all = src || d.bars;
+    if (all.length < 200) return Promise.resolve(null);
+    const id = "info:" + key + ":" + sec + ":" + (++this.seq), bars = all.map((b, i) => i < all.length - 1 ? { ...b, done: true } : b);
+    return new Promise(res => this.engine.send({ id, seq: 1, bars, daily: d.daily, barSec: sec, layers: {}, tick: inst.tick, info: true },
       r => { this.engine.drop(id); res(r && r.info); }));
   }
 
@@ -135,7 +147,7 @@ export class PlanManager {
       // a korábban (rés-TP nélkül) mentett tervek kiegészítése
       for (const day of Object.values(st.days)) for (const k of ["long", "short"]) if (day[k] && day[k].tv !== TV) {
         day[k].gap = day[k].gap || (this.insts[key].short === "HYPE" ? 3 : day[k].entry.p * 0.05);
-        this.addGaps(key, day[k], day[k].from || day.T); changed = true;
+        await this.addGaps(key, day[k], day[k].from || day.T); changed = true;
       }
       const T0 = asiaClose(now), day = st.days[T0], L = nyToUtc(...(() => { const x = nyDate(T0 + H); return [x.y, x.m, x.d]; })(), 5, 0);
       if (day && !day.rev && now >= L) {
@@ -150,6 +162,7 @@ export class PlanManager {
       if (changed) this.save(key, st);
       this.runSim(key);
       d.info = await this.info(key);
+      d.info15 = await this.info(key, d.bars15, 900);
       this.onChange(key);
     } catch (e) { console.warn("[szezso] terv:", e); }
     finally { this.busy.delete(key); }
@@ -174,7 +187,7 @@ export class PlanManager {
     if (!d || !d.bars15.length) return null;
     const days = Object.values(st.days).sort((a, b) => a.T - b.T).map(x => ({ ...x, L: londonClose(x.T) }));
     const bars = d.bars15.filter(b => b.t >= (days[0] ? days[0].T : Infinity));
-    const sim = simulate(days, bars, { bal: this.balances(), lo: 10, hi: 150, sized: hype, minTp2: avg => hype ? 2 : avg * 0.033 }, Date.now());
+    const sim = simulate(days, bars, { bal: this.balances(), lo: 10, hi: 150, sized: hype, minTp2: (avg, p) => hype ? 2 : Math.max(2 * ((p && p.atr) || avg * 0.004), avg * 0.004) }, Date.now());
     sim.days = days; sim.key = key; sim.hype = hype;
     this.sims.set(key, sim);
     return sim;
