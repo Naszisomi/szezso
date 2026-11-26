@@ -160,11 +160,11 @@ async function findXPerps() {
       } catch (e) { log(`${h.name} ${t}: ${e.message}`, "warn"); }
     }
   }
-  const pick = found.filter(f => /^(HYPE|BTC|ETH)-/.test(f.instId));
+  const pick = found.filter(f => /^(HYPE|BTC|BNB|ETH)-/.test(f.instId));
   if (!found.length) {
     $("insts").innerHTML = '<span class="warn">X-Perp terméket nem találtam a nyilvános listában. A 3. pontban kézzel is beírható az azonosító.</span>';
   } else {
-    let html = `<p>Talált X-Perp termékek: ${found.length}. HYPE / BTC / ETH:</p><div class="tbl"><table><tr><th>instId</th><th>cím</th><th>típus</th><th>1 szerződés</th><th>tick</th><th>lejárat</th><th>állapot</th></tr>`;
+    let html = `<p>Talált X-Perp termékek: ${found.length}. HYPE / BTC / BNB / ETH:</p><div class="tbl"><table><tr><th>instId</th><th>cím</th><th>típus</th><th>1 szerződés</th><th>tick</th><th>lejárat</th><th>állapot</th></tr>`;
     for (const f of (pick.length ? pick : found)) {
       html += `<tr><td><b>${f.instId}</b></td><td>${f.host.name}</td><td>${f.instType}</td><td>${f.ctVal} ${f.ctValCcy}</td><td>${f.tickSz}</td><td>${f.expTime ? fmtTime(+f.expTime) : "–"}</td><td>${f.state}</td></tr>`;
     }

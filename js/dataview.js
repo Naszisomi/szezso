@@ -1,4 +1,4 @@
-// Adatfül (HYPE / BTC / ETH adatok): a napi tervek számlánként, az előző napok, az ICT-forgatókönyvek és
+// Adatfül (HYPE / BTC / BNB adatok): a napi tervek számlánként, az előző napok, az ICT-forgatókönyvek és
 // -értékelések, az indikátorok és a Gann-naptár – szövegesen, hogy a chart tiszta maradhasson.
 const fmtT = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 const fmtD = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "short", day: "numeric" });

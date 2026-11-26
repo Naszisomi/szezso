@@ -1,13 +1,38 @@
 // Hyperliquid nyilvános adatok (kulcs nélkül) – csak a régi napi/heti/havi előzmény pótlására,
 // az OKX UM X-Perp kezdete előtti időszakra. USDC-ben jegyzett párok.
 //  HYPE: HYPE/USDC spot ("@107"), ha az üres, a HYPE-USDC perp; BTC, ETH: USDC perp.
+//  BNB: a Binance BNB/USDT spot gyertyái (nyilvános, kulcs nélkül); ha a Binance nem érhető el, a Hyperliquid BNB perp.
 import { loadCandles, saveCandles } from "./store.js";
 
 const INFO = "https://api.hyperliquid.xyz/info";
-const SOURCES = { HYPE: ["@107", "HYPE"], BTC: ["BTC"], ETH: ["ETH"] };
+const SOURCES = { HYPE: ["@107", "HYPE"], BTC: ["BTC"], ETH: ["ETH"], BNB: ["BINANCE:BNBUSDT", "BNB"] };
+const BINANCE = ["https://data-api.binance.vision", "https://api.binance.com"];
+const BN_IV = { "1d": "1d", "1h": "1h", "4h": "4h" };
+
+// Binance klines: [nyitás, o, h, l, c, mennyiség, …] – 1000-es lapokban, a startTime-tól
+async function binance(symbol, interval, startTime, endTime) {
+  for (const host of BINANCE) {
+    try {
+      const out = [];
+      let from = startTime;
+      for (let k = 0; k < 20 && from < endTime; k++) {
+        const r = await fetch(`${host}/api/v3/klines?symbol=${symbol}&interval=${BN_IV[interval]}&startTime=${from}&endTime=${endTime}&limit=1000`);
+        if (!r.ok) throw new Error("Binance HTTP " + r.status);
+        const d = await r.json();
+        if (!Array.isArray(d) || !d.length) break;
+        for (const x of d) out.push({ t: +x[0], o: +x[1], h: +x[2], l: +x[3], c: +x[4], v: +x[5] });
+        from = +d[d.length - 1][0] + 1;
+        if (d.length < 1000) break;
+      }
+      return out;
+    } catch (e) { console.warn("[szezso] Binance:", host, e.message || e); }
+  }
+  return [];
+}
 const DAY = 86400000;
 
 async function snapshot(coin, interval, startTime, endTime) {
+  if (coin.startsWith("BINANCE:")) return binance(coin.slice(8), interval, startTime, endTime);
   const r = await fetch(INFO, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ type: "candleSnapshot", req: { coin, interval, startTime, endTime } }),

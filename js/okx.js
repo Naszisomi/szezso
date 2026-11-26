@@ -32,6 +32,17 @@ async function getJson(url) {
 }
 const sleep = ms => new Promise(res => setTimeout(res, ms));
 
+// Termék keresése a nyilvános terméklistában (ha a beírt azonosító nem él), pl. /^BNB-USD_UM_XPERP-3105/
+export async function findInstId(re) {
+  for (const t of ["FUTURES", "SWAP"]) {
+    try { const d = await getJson(`${REST}/api/v5/public/instruments?instType=${t}`); const x = d.find(i => re.test(i.instId)); if (x) return x.instId; } catch {}
+  }
+  return null;
+}
+export async function instAlive(instId) {
+  try { const d = await getJson(`${REST}/api/v5/market/candles?instId=${encodeURIComponent(instId)}&bar=1H&limit=1`); return d.length > 0; } catch { return false; }
+}
+
 // A legfrissebb (legfeljebb 300) gyertya, növekvő időrendben.
 export async function fetchLatest(instId, tf) {
   const d = await getJson(`${REST}/api/v5/market/candles?instId=${encodeURIComponent(instId)}&bar=${BARS[tf].okx}&limit=300`);

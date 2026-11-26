@@ -13,16 +13,19 @@
   body { display: flex; flex-direction: column; touch-action: pan-x pan-y; }
   /* a charton a csípés/húzás csak a chartot nagyítja, az oldalt nem (különben szétcsúszik a kép) */
   #views, #views * { touch-action: none; }
-  header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid #e5e5e5; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 3px 6px; border-bottom: 1px solid #e5e5e5; }
   header .brand { font-weight: 700; margin-right: 6px; }
   .group { display: flex; gap: 4px; flex-wrap: wrap; }
-  button { font-size: 15px; padding: 8px 12px; min-width: 44px; border-radius: 8px; border: 1px solid #ccc; background: #fff; color: #111; }
+  button { font-size: 13px; padding: 5px 8px; min-width: 36px; border-radius: 6px; border: 1px solid #ccc; background: #fff; color: #111; }
+  /* összecsukott rétegsor: csak a kapcsológomb látszik */
+  #layers.closed button:not(.tog) { display: none; }
+  button.tog { background: #f3f3f3; }
   button.on { background: #111; color: #fff; border-color: #111; }
-  .sep { width: 1px; height: 26px; background: #ddd; margin: 0 4px; }
+  .sep { width: 1px; height: 20px; background: #ddd; margin: 0 4px; }
   .live { width: 12px; height: 12px; border-radius: 50%; background: #bbb; display: inline-block; margin-left: auto; }
   .live.ok { background: #089981; } .live.connecting { background: #F5A623; } .live.down { background: #F23645; }
   .status { font-size: 13px; color: #666; } .status.err { color: #C62828; }
-  #tabs button { font-size: 14px; padding: 7px 10px; }
+  #tabs button { font-size: 13px; padding: 5px 8px; }
   #tabs button.multi { border-style: dashed; }
   #tabs button.multi.on { border-style: solid; }
   #views { flex: 1; display: flex; min-height: 0; }

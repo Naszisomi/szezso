@@ -1,7 +1,8 @@
 // szezso – alap chart: élő gyertyák, idősík-váltó, magyar idő, fülek.
-// Fülek: 6 HYPE számlafül (Fő, Al1–Al5), BTC, ETH, „6×HYPE” (mind a 6 számla egyszerre)
-// és „HYPE·BTC·ETH” (a három termék egyszerre).
-import { BARS, fetchLatest, fetchOlder, LiveFeed } from "./okx.js";
+// Fülek: 6 HYPE számlafül (Fő, Al1–Al5), BTC, BNB, „6×HYPE” (mind a 6 számla egyszerre),
+// „HYPE·BTC·BNB” (a három termék egyszerre), adatfülek és a papírkereskedés. Kereskedés csak HYPE-pal,
+// a BTC és a BNB csak számolva, tájékoztatásként.
+import { BARS, fetchLatest, fetchOlder, LiveFeed, findInstId, instAlive } from "./okx.js";
 import { loadCandles, saveCandles, merge, getPref, setPref } from "./store.js";
 import { hlHistory, hlRange } from "./hl.js";
 import { SceneLayer } from "./draw.js";
@@ -19,17 +20,17 @@ const HISTORY_BARS = 5000;   // ennyi gyertya előzményt tölt vissza a hátté
 export const INSTRUMENTS = {
   HYPE: { instId: "HYPE-USD_UM_XPERP-310523", name: "HYPEUSD UM X-Perp (2031 máj.)", short: "HYPE", tick: 0.001 },
   BTC:  { instId: "BTC-USD_UM_XPERP-310404",  name: "BTCUSD UM X-Perp (2031 ápr.)",  short: "BTC",  tick: 0.1 },
-  ETH:  { instId: "ETH-USD_UM_XPERP-310404",  name: "ETHUSD UM X-Perp (2031 ápr.)",  short: "ETH",  tick: 0.01 },
+  BNB:  { instId: "BNB-USD_UM_XPERP-310523",  name: "BNBUSD UM X-Perp (2031 máj.)",  short: "BNB",  tick: 0.1, find: /^BNB-USD_UM_XPERP-3105/ },
 };
 const ACCOUNTS = ["Fő", "Al1", "Al2", "Al3", "Al4", "Al5"];
 // fül -> elrendezés: [termék, számla] cellák
 const TABS = [
   ...ACCOUNTS.map(a => ({ id: a, label: a, layout: "single", cells: [["HYPE", a]] })),
   { id: "BTC", label: "BTC", layout: "single", cells: [["BTC", null]] },
-  { id: "ETH", label: "ETH", layout: "single", cells: [["ETH", null]] },
+  { id: "BNB", label: "BNB", layout: "single", cells: [["BNB", null]] },
   { id: "6HYPE", label: "6×HYPE", layout: "six", cells: ACCOUNTS.map(a => ["HYPE", a]) },
-  { id: "TRIO", label: "HYPE·BTC·ETH", layout: "three", cells: [["HYPE", null], ["BTC", null], ["ETH", null]] },
-  ...["HYPE", "BTC", "ETH"].map(k => ({ id: "d" + k, label: k + " adat", layout: "data", key: k, cells: [] })),
+  { id: "TRIO", label: "HYPE·BTC·BNB", layout: "three", cells: [["HYPE", null], ["BTC", null], ["BNB", null]] },
+  ...["HYPE", "BTC", "BNB"].map(k => ({ id: "d" + k, label: k + " adat", layout: "data", key: k, cells: [] })),
 ];
 const UP = "#089981", DOWN = "#F23645";
 
@@ -523,6 +524,12 @@ function buildTfButtons() {
 function buildLayerButtons() {
   const box = document.getElementById("layers");
   box.innerHTML = "";
+  // a rétegsor összecsukható, hogy több hely maradjon a chartnak
+  const open = getPref("layersOpen", true), tog = document.createElement("button");
+  tog.className = "tog"; tog.textContent = open ? "Rétegek ▴" : "Rétegek ▾";
+  tog.onclick = () => { setPref("layersOpen", !open); buildLayerButtons(); window.dispatchEvent(new Event("resize")); };
+  box.classList.toggle("closed", !open);
+  box.appendChild(tog);
   for (const { key: k, label } of LAYERS) {
     const b = document.createElement("button");
     b.textContent = label; b.className = layers[k] ? "on" : "";
@@ -549,9 +556,22 @@ function buildTabs() {
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => {
+// a kézzel beírt azonosító ellenőrzése; ha nem él, keresés a terméklistában (eredmény a tableten tárolva)
+async function resolveInsts() {
+  await Promise.all(Object.entries(INSTRUMENTS).filter(([, i]) => i.find).map(async ([k, i]) => {
+    const saved = getPref("inst." + k, null);
+    if (saved) { i.instId = saved; return; }
+    if (await instAlive(i.instId)) return;
+    const id = await findInstId(i.find);
+    if (id) { i.instId = id; setPref("inst." + k, id); }
+    else console.warn("[szezso] nem található:", k);
+  }));
+}
+
+window.addEventListener("DOMContentLoaded", async () => {
   buildTfButtons();
   buildLayerButtons();
+  await Promise.race([resolveInsts(), new Promise(r => setTimeout(r, 4000))]);
   showTab(current);
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 });
