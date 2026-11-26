@@ -29,7 +29,7 @@ export const MILANA_DEFAULTS = {
 const nyFmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23",
   year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", weekday: "short" });
 function nyParts(ms) { return Object.fromEntries(nyFmt.formatToParts(new Date(ms)).map(x => [x.type, x.value])); }
-function nyOffset(ms) {           // NY helyi idő - UTC, ms-ben
+export function nyOffset(ms) {           // NY helyi idő - UTC, ms-ben
   const p = nyParts(ms);
   return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(ms / 1000) * 1000;
 }

@@ -24,13 +24,13 @@ export const INSTRUMENTS = {
   BTC:  { instId: "BTC-USD_UM_XPERP-310404",  name: "BTCUSD UM X-Perp (2031 ápr.)",  short: "BTC",  tick: 0.1 },
   BNB:  { instId: "BNB-USD_UM_XPERP-310523",  name: "BNBUSD UM X-Perp (2031 máj.)",  short: "BNB",  tick: 0.1, find: /^BNB-USD_UM_XPERP-3105/ },
 };
-const ACCOUNTS = ["Fő", "Al1", "Al2", "Al3", "Al4", "Al5"];
+const ACCOUNTS = ["Fő", "Al1", "Al2", "Al3", "Al4", "Al5", "SB"];   // SB: silver bullet (7. számla)
 // fül -> elrendezés: [termék, számla] cellák
 const TABS = [
   ...ACCOUNTS.map(a => ({ id: a, label: a, layout: "single", cells: [["HYPE", a]] })),
   { id: "BTC", label: "BTC", layout: "single", cells: [["BTC", null]] },
   { id: "BNB", label: "BNB", layout: "single", cells: [["BNB", null]] },
-  { id: "6HYPE", label: "6×HYPE", layout: "six", cells: ACCOUNTS.map(a => ["HYPE", a]) },
+  { id: "6HYPE", label: "6×HYPE", layout: "six", cells: ACCOUNTS.slice(0, 6).map(a => ["HYPE", a]) },
   { id: "TRIO", label: "HYPE·BTC·BNB", layout: "three", cells: [["HYPE", null], ["BTC", null], ["BNB", null]] },
   ...["HYPE", "BTC", "BNB"].map(k => ({ id: "d" + k, label: k + " adat", layout: "data", key: k, cells: [] })),
   { id: "PAPER", label: "Papír", layout: "data", key: "HYPE", paper: true, cells: [] },

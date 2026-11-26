@@ -62,6 +62,18 @@ function targets(p, tf, d, ref) {
   }
   for (const x of c.crt || []) if (d > 0 ? x > ref : x < ref) out.push({ p: x, why: `CRT ${tf}` });
   for (const g of c.cf || []) if (d > 0 ? g.p > ref : g.p < ref) out.push({ p: g.p, why: `EGYEZÉS ${g.n} (${g.codes.join("·")})`, cf: cfRank(g) });
+  if (tf === "d1") {
+    // swing-célok: a minták mért távja (4h) és a rajzolt nyilak vége; ha a közelében (1,5%) rés van, arra igazítva –
+    // elsősorban az iránnyal ellentétes résre (longnál a fenti medve-rés), különben bármelyik jelentős résre
+    const src = [...((p.cand.h4 && p.cand.h4.pat) || []).filter(x => x.dir === d).map(x => ({ p: x.target, why: "minta: " + x.name })), ...(p.swingX || [])];
+    const gaps = ["d1", "h4", "h1"].flatMap(k => ((p.cand[k] && p.cand[k].gaps) || []).map(g => ({ bot: g[0], top: g[1], bull: g[2], tf: k })));
+    for (const x of src) {
+      if (!(d > 0 ? x.p > ref : x.p < ref)) continue;
+      const near = gaps.filter(g => Math.abs((d > 0 ? g.bot : g.top) - x.p) <= x.p * 0.015)
+        .sort((a, b) => ((d > 0 ? a.bull : !a.bull) - (d > 0 ? b.bull : !b.bull)) || Math.abs((d > 0 ? a.bot : a.top) - x.p) - Math.abs((d > 0 ? b.bot : b.top) - x.p))[0];
+      out.push(near ? { p: d > 0 ? near.bot : near.top, why: `${x.why} → ${near.tf} rés`, swing: true } : { ...x, swing: true });
+    }
+  }
   if (tf === "m15") for (const x of p.levels) if (/^(TLO|TNY|NYAM|TPM|TDO|TAO|TWO)$|^Milana/.test(x.why || "") && (d > 0 ? x.p > ref : x.p < ref)) out.push(x);
   return out.sort((a, b) => d * (a.p - b.p));
 }
@@ -70,6 +82,7 @@ function cfRank(g) { return g.n + (g.codes.includes("4h") ? 3 : 0) + (g.codes.in
 export function strongCf(g) { return g.n >= 5 && (g.codes.includes("4h") || g.codes.includes("LIQ")); }
 function nearest(p, tf, d, from, step) {
   const all = targets(p, tf, d, from);
+  if (tf === "d1") { const sw = all.find(x => x.swing); if (sw) return sw; }
   // a legközelebbi cél környékén (≈ 1 ATR) az egyezésvonal nyer (a legerősebb), és a TP 2 tickkel a vonal elé kerül
   const win = Math.max(p.atr || 0, Math.abs(from) * 0.004);
   let t = all[0];
@@ -95,7 +108,7 @@ export function tpSet(p, avg, chain, minTp2) {
 }
 
 // egységnyi (1/1/2/4) rács kockázata dollárban, egységenként
-function riskPerUnit(d, legs, lo, hi) {
+export function riskPerUnit(d, legs, lo, hi) {
   let r = 0;
   legs.forEach((l, i) => { const u = UNITS[i]; r += u * (d > 0 ? l.p - lo : hi - l.p) + u * l.p / 10; });
   return r;

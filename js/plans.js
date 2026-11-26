@@ -8,13 +8,16 @@ import { nyToUtc, nyDate } from "./ind/milana.js";
 import { computeGaps, atr } from "./engine/gaps.js";
 import { rsi } from "./engine/osc.js";
 import { simulate, ACC_NAMES } from "./grid.js";
+import { simulateSB } from "./sb.js";
 import { saveCandles, getPref } from "./store.js";
+import { arrowPlans } from "./drawings.js";
 export { ACC_NAMES };
 
-const H = 3600000, DAY = 86400000, KEEP_DAYS = 30, TV = 4;
+const H = 3600000, DAY = 86400000, KEEP_DAYS = 30, TV = 5;
 const COL = { long: "#089981", short: "#F23645", done: "#9E9E9E", old: "#8D6E63", pos: "#2962FF" };   // long zöld, short piros, teljesült szürke, előző napi barna
 const fmtDay = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "short", day: "numeric" });
-export const DEFAULT_BAL = 17000;
+export const DEFAULT_BAL = Math.round(102000 / 7 * 100) / 100;   // 7 számla: Fő, Al1–Al5 (rács) és SB (silver bullet), mind cross
+export const ALL_ACC = [...ACC_NAMES, "SB"];
 
 export function asiaClose(ms, back = 0) {           // a NY-nap kezdete (= az Ázsia-killzone vége), back nappal korábban
   const d = nyDate(ms), u = new Date(Date.UTC(d.y, d.m - 1, d.d - back));
@@ -37,7 +40,7 @@ function slim(p) {
 function candidates(bars, sec, T, ref) {
   const b = bars.filter(x => x.t + sec * 1000 <= T).map(x => ({ ...x, done: true }));
   if (b.length < 30) return { gaps: [], crt: [] };
-  const gaps = computeGaps(b, sec, atr(b)).filter(g => Math.abs(g.bot - ref) <= ref * 0.35).map(g => [g.bot, g.top]);
+  const gaps = computeGaps(b, sec, atr(b)).filter(g => Math.abs(g.bot - ref) <= ref * 0.35).map(g => [g.bot, g.top, g.bull ? 1 : 0]);
   const crt = b.slice(-3).flatMap(x => [x.h, x.l]);
   return { gaps, crt };
 }
@@ -62,7 +65,7 @@ export class PlanManager {
   async series(inst, tf, have, want, from = Infinity) {
     let bars = have.length ? have : await this.loadCandles(inst.instId, tf);
     bars = this.merge(bars, await this.fetchLatest(inst.instId, tf));
-    for (let k = 0; k < 20 && (bars.length < want || bars[0].t > from); k++) {
+    for (let k = 0; k < 40 && (bars.length < want || bars[0].t > from); k++) {
       const older = await this.fetchOlder(inst.instId, tf, bars[0].t);
       if (!older.length) break;
       bars = this.merge(older, bars);
@@ -77,6 +80,7 @@ export class PlanManager {
     d.bars = await this.series(inst, "1h", d.bars, 900);
     d.bars4 = await this.series(inst, "4h", d.bars4, 600);
     d.bars15 = await this.series(inst, "15m", d.bars15, 400, from);
+    if (inst.short === "HYPE") d.bars5 = await this.series(inst, "5m", d.bars5 || [], 400, from);   // a silver bullethez
     d.daily = await this.fetchLatest(inst.instId, "1D");
   }
 
@@ -86,8 +90,9 @@ export class PlanManager {
     if (!p || p.tv === TV) return p;
     const ref = p.entry.p;
     p.cand = { m15: candidates(d.bars15, 900, T, ref), h1: candidates(d.bars, 3600, T, ref), h4: candidates(d.bars4, 14400, T, ref), d1: candidates(d.daily, 86400, T, ref) };
-    p.cand.m15.cf = await this.cfAt(key, d.bars15, 900, T);
-    p.cand.h4.cf = await this.cfAt(key, d.bars4, 14400, T);
+    p.cand.m15.cf = (await this.cfAt(key, d.bars15, 900, T)).cf || [];
+    const i4 = await this.cfAt(key, d.bars4, 14400, T);
+    p.cand.h4.cf = i4.cf || []; p.cand.h4.pat = i4.pat || [];
     p.cand.h1.cf = p.levels.filter(x => /^EGYEZÉS/.test(x.why || "")).map(x => { const m = /^EGYEZÉS (\d+) \((.*)\)/.exec(x.why) || []; return { p: x.p, n: +m[1] || 5, codes: (m[2] || "").split("·") }; });
     p.tick = this.insts[key].tick; p.atr = (p.tpGap || 0) * 4;
     delete p.gapTps; delete p.gapTps2; delete p.crtTps;
@@ -97,10 +102,10 @@ export class PlanManager {
   // egy idősík egyezésvonalai a T időpontban (a motorból)
   cfAt(key, bars, sec, T) {
     const inst = this.insts[key], b = bars.filter(x => x.t + sec * 1000 <= T).map(x => ({ ...x, done: true }));
-    if (b.length < 100) return Promise.resolve([]);
+    if (b.length < 100) return Promise.resolve({});
     const id = "cf:" + key + ":" + sec + ":" + T + ":" + (++this.seq);
     return new Promise(res => this.engine.send({ id, seq: 1, bars: b, daily: this.data.get(key).daily.filter(x => x.t < T), barSec: sec, layers: {}, tick: inst.tick, info: true },
-      r => { this.engine.drop(id); res((r && r.info && r.info.cf) || []); }));
+      r => { this.engine.drop(id); res((r && r.info) || {}); }));
   }
 
   run(key, T) {
@@ -179,16 +184,22 @@ export class PlanManager {
   setRsiTf(tf) { this.rsiTf = tf; this.tickAll(); }
 
   // papírszámlák egyenlege (a tableten, számlánként szerkeszthető)
-  balances() { const b = getPref("paper.bal", {}); return Object.fromEntries(ACC_NAMES.map(a => [a, +b[a] || DEFAULT_BAL])); }
+  balances() { const b = getPref("paper.bal", {}); return Object.fromEntries(ALL_ACC.map(a => [a, +b[a] || DEFAULT_BAL])); }
 
   // a folyamatos rács végigjátszása a 15m gyertyákon (csak HYPE-pal kereskedünk: a többinél méretezés nélkül)
   runSim(key) {
     const d = this.data.get(key), st = this.store(key), hype = this.insts[key].short === "HYPE";
     if (!d || !d.bars15.length) return null;
+    const ap = arrowPlans(key);       // a rajzolt nyilak vége: felfelé mutató → long swing-cél, lefelé → short swing-cél
     const days = Object.values(st.days).sort((a, b) => a.T - b.T).map(x => ({ ...x, L: londonClose(x.T) }));
+    for (const day of days) {
+      if (day.long) day.long = { ...day.long, swingX: ap.short.map(a => ({ p: a.p, why: "a rajzod nyila" })) };
+      if (day.short) day.short = { ...day.short, swingX: ap.long.map(a => ({ p: a.p, why: "a rajzod nyila" })) };
+    }
     const bars = d.bars15.filter(b => b.t >= (days[0] ? days[0].T : Infinity));
     const sim = simulate(days, bars, { bal: this.balances(), lo: 10, hi: 150, sized: hype, minTp2: (avg, p) => hype ? 2 : Math.max(2 * ((p && p.atr) || avg * 0.004), avg * 0.004) }, Date.now());
     sim.days = days; sim.key = key; sim.hype = hype;
+    if (hype && d.bars5 && days[0]) sim.sb = simulateSB(d.bars5.filter(b => b.t >= days[0].T), { gap: 3, tick: this.insts[key].tick, sized: true, bal: this.balances()["SB"], lo: 10, hi: 150 });
     this.sims.set(key, sim);
     return sim;
   }
@@ -211,18 +222,19 @@ export class PlanManager {
     const acc = account || "Fő", T0 = asiaClose(Date.now()), items = [], bs = barSec * 1000;
     const t2 = lastT + 6 * bs, f = p => +p.toPrecision(6);
     const rsiFlag = this.rsiFlag(key), last = s.last ? s.last.c : NaN;
-    for (const t of s.trades) {
+    const sbT = acc === "SB" && s.sb ? s.sb.trades.filter(t => t.state === "vár" || t.state === "aktív" || (t.state === "lezárva" && t.closeT >= T0)) : [];
+    for (const t of [...s.trades, ...sbT]) {
       if (t.acc !== acc) continue;
       const open = t.state === "aktív" || t.state === "részben" || t.state === "védett", today = t.day === T0;
       // nyitott, várakozó, és a ma lezárt kereskedések (szürkén); a lejárt megbízások nem
       if (!(open || t.state === "vár" || (t.state === "lezárva" && (today || t.closeT >= T0)))) continue;
-      const sd = t.dir > 0 ? "L" : "S", old = !today, pre = old ? `${fmtDay.format(t.day)} ` : "";
+      const sb = t.acc === "SB", sd = (sb ? "SB " : "") + (t.dir > 0 ? "L" : "S"), old = !today && !sb, pre = old ? `${fmtDay.format(t.day)} ` : "";
       const t1 = Math.min(Math.max(t.from, lastT - 40 * bs), lastT - 12 * bs);
       const day = s.days.find(x => x.T === t.day), primary = day && day.primary === t.dir;
-      const w = !old && primary ? 3 : 2, base = old ? COL.old : t.dir > 0 ? COL.long : COL.short;
+      const w = !old && primary && !sb ? 3 : 2, base = sb ? "#9C27B0" : old ? COL.old : t.dir > 0 ? COL.long : COL.short;
       const rows = [];
       t.legs.forEach((l, i) => rows.push({ y: l.p, text: `${pre}${sd}${i ? "DCA" + i : "E"} ${f(l.p)}`, done: i < t.filled, width: i ? Math.max(1, w - 1) : w, style: i ? "dotted" : "solid" }));
-      if (t.tps) t.tps.forEach((x, i) => { if (t.shares[i]) rows.push({ y: x.p, text: `${pre}${sd}${i < 3 ? "TP" + (i + 1) : "SWING"} ${f(x.p)} · ${Math.round(t.shares[i] * 100)}%`, done: t.tpHit.includes(i), width: Math.max(1, w - 1), style: "dashed" }); });
+      if (t.tps) t.tps.forEach((x, i) => { if (t.shares[i]) rows.push({ y: x.p, text: sb ? `${sd}TP ${f(x.p)}` : `${pre}${sd}${i < 3 ? "TP" + (i + 1) : "SWING"} ${f(x.p)} · ${Math.round(t.shares[i] * 100)}%`, done: t.tpHit.includes(i), width: Math.max(1, w - 1), style: "dashed" }); });
       if (t.stop != null) rows.push({ y: t.stop, text: `${pre}${sd}SL+ ${f(t.stop)}`, done: t.exits.some(e => e.why === "pozitív stop"), width: 1, style: "dashed", color: "#616161" });
       if (open && t.open > 0) {                                     // pozíció-vonal, mint a TradingView papírkereskedésénél
         const u = t.dir * (last - t.avg) * t.open;
