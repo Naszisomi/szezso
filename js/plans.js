@@ -92,8 +92,14 @@ export class PlanManager {
       await this.load(key);
       const d = this.data.get(key), now = Date.now(), st = this.store(key);
       let changed = false;
+      if (!st.start) {                                     // egyszeri tiszta kezdés: a korábbi napok törlése, az előzmény innen gyűlik
+        st.start = asiaClose(now);
+        for (const k of Object.keys(st.days)) if (+k < st.start) delete st.days[k];
+        changed = true;
+      }
       for (const back of [1, 0]) {                         // tegnapi (ha hiányzik) és mai terv
         const T = asiaClose(now, back);
+        if (T < st.start) continue;
         if (!st.days[T]) { const p = await this.run(key, T); if (p) { st.days[T] = { T, ...slim(p), rev: false }; changed = true; } }
       }
       const T0 = asiaClose(now), day = st.days[T0], L = nyToUtc(...(() => { const x = nyDate(T0 + H); return [x.y, x.m, x.d]; })(), 5, 0);
@@ -136,12 +142,9 @@ export class PlanManager {
         items.push({ type: "line", t1, p1: y, t2, p2: y, color, width, style });
         items.push({ type: "label", t: t2, p: y, text, color, size: 12, align: "right", vAlign: "above", bold: width > 2, bg: "rgba(255,255,255,0.85)" });
       };
-      let q = 0, v = 0;
-      [p.entry, ...p.dca].forEach((l, i) => {
-        q += UNITS[i]; v += UNITS[i] * l.p;
-        const done = i < r.filled ? " ✓" : "", st = i === 0 ? ` · ${r.state}${p.revised ? " (London után)" : ""}` : ` · átl. ${f(v / q)}`;
-        row(l.p, `${pre}${side} ${i ? "DCA" + i : "ENTRY"} ${f(l.p)} ×${UNITS[i]}${done}${st}`, c(i ? COL.dca : COL.entry), i ? Math.max(1, w - 1) : w, i ? "dashed" : "solid");
-      });
+      // a címkén csak a megnevezés és az ár; adag, állapot, átlagár az adatfülön
+      [p.entry, ...p.dca].forEach((l, i) =>
+        row(l.p, `${pre}${side} ${i ? "DCA" + i : "ENTRY"} ${f(l.p)}`, c(i ? COL.dca : COL.entry), i ? Math.max(1, w - 1) : w, i ? "dashed" : "solid"));
       if (r.state === "vár" || r.state === "aktív")
         r.tps.forEach((t, i) => row(t.p, `${pre}${side} TP${i + 1} ${f(t.p)}`, c(COL.tp), Math.max(1, w - 1), "dashed"));
     }
