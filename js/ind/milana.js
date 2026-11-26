@@ -33,14 +33,14 @@ function nyOffset(ms) {           // NY helyi idő - UTC, ms-ben
   const p = nyParts(ms);
   return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(ms / 1000) * 1000;
 }
-function nyToUtc(y, m, d, hh, mm) {
+export function nyToUtc(y, m, d, hh, mm) {
   const guess = Date.UTC(y, m - 1, d, hh, mm);
   let res = guess - nyOffset(guess);
   const off2 = nyOffset(res);
   if (guess - off2 !== res) res = guess - off2;
   return res;
 }
-function nyDate(ms) { const p = nyParts(ms); return { y: +p.year, m: +p.month, d: +p.day, wd: p.weekday }; }
+export function nyDate(ms) { const p = nyParts(ms); return { y: +p.year, m: +p.month, d: +p.day, wd: p.weekday }; }
 
 // Az adott NY-időpontokat tartalmazó gyertyák indexei (növekvő), a Pine f_hit logikája szerint:
 // az a gyertya, amelynek záróideje a célidő után van, és az előzőé legfeljebb a célidő.

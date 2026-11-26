@@ -7,6 +7,7 @@ import { hlHistory, hlRange } from "./hl.js";
 import { SceneLayer } from "./draw.js";
 import { milanaHistoryFrom } from "./ind/milana.js";
 import { runEngine, LAYERS } from "./engine/index.js";
+import { PlanManager } from "./plans.js";
 
 // Rétegek ki-be kapcsolása (a részletes beállítások az 5. lépésben jönnek)
 const layers = Object.fromEntries(LAYERS.map(l => [l.key, getPref("layer." + l.key, l.def)]));
@@ -69,13 +70,13 @@ const engine = (() => {
         if (msg.tail) for (const b of msg.tail) { const l = s0.bars[s0.bars.length - 1]; if (l && l.t === b.t) s0.bars[s0.bars.length - 1] = b; else if (!l || b.t > l.t) s0.bars.push(b); }
         if (msg.daily !== undefined) s0.daily = msg.daily;
         st.set(msg.id, s0);
-        const r = runEngine({ bars: s0.bars, barSec: msg.barSec, daily: s0.daily, layers: msg.layers, tick: msg.tick });
+        const r = runEngine({ bars: s0.bars, barSec: msg.barSec, daily: s0.daily, layers: msg.layers, tick: msg.tick, plan: msg.plan, minGap: msg.minGap });
         const codes = new Uint8Array(r.barColors ? s0.bars.length : 0);
         if (r.barColors) r.barColors.forEach((c, i) => { codes[i] = c === "#FFEB3B" ? 1 : c === "#9C27B0" ? 2 : 0; });
-        cb({ id: msg.id, seq: msg.seq, items: r.items, codes, hasColors: !!r.barColors, t0: s0.bars.length ? s0.bars[0].t : 0 });
+        cb({ id: msg.id, seq: msg.seq, items: r.items, plans: r.ctx && r.ctx.plans, codes, hasColors: !!r.barColors, t0: s0.bars.length ? s0.bars[0].t : 0 });
       });
     },
-    drop(id) { cbs.delete(id); if (w) w.postMessage({ id, drop: true }); },
+    drop(id) { cbs.delete(id); if (this._st) this._st.delete(id); if (w) w.postMessage({ id, drop: true }); },
   };
 })();
 function sameCodes(a, at, b, bt) {
@@ -239,13 +240,20 @@ class DataSet {
     if (r.error) setStatus("Motor hiba: " + r.error, "err");
     else {
       const old = this.codes, oldT0 = this.codesT0;
-      this.scene = { items: r.items.filter(it => !it.pane) };
+      this.engItems = r.items.filter(it => !it.pane);
+      this.mergeScene();
       this.volScene = { items: r.items.filter(it => it.pane === "vol") };
       this.codes = r.hasColors ? r.codes : null; this.codesT0 = r.t0;
       const recolor = !sameCodes(old, oldT0, this.codes, this.codesT0);
       for (const p of this.panels) p.applyResult(recolor);
     }
     if (this.pending) setTimeout(() => this.compute(), 120);
+  }
+  // a motor rajzai + a napi kereskedési tervek (külön számolva, az 1 órás adatokból)
+  mergeScene() {
+    const n = this.bars.length;
+    const pi = layers.plan && n ? plans.items(this.key, this.bars[n - 1].t, BARS[this.tf].sec) : [];
+    this.scene = { items: (this.engItems || []).concat(pi) };
   }
   // a gyertya CRT színe (az eredmény a küldéskori gyertyákhoz igazodik, ezért idő szerint keressük)
   colorAt(i) {
@@ -296,6 +304,13 @@ class DataSet {
   }
 }
 
+const plans = new PlanManager({
+  engine, fetchLatest, fetchOlder, merge, loadCandles, insts: INSTRUMENTS,
+  onChange: key => { for (const ds of hub.sets.values()) if (ds.key === key && !ds.dead) { ds.mergeScene(); for (const p of ds.panels) p.applyResult(false); } },
+});
+window.szezsoPlans = plans;   // az adatfülhöz és hibakereséshez
+setTimeout(() => { window.szezsoHub = hub; });
+
 const hub = {
   tf: BARS[getPref("tf", "15m")] ? getPref("tf", "15m") : "15m",
   sets: new Map(),
@@ -304,6 +319,7 @@ const hub = {
     if (!this.sets.has(k)) {
       this.sets.set(k, new DataSet(key, this.tf));
       feed.subscribe(INSTRUMENTS[key].instId, this.tf);
+      plans.watch(key);
     }
     return this.sets.get(k);
   },

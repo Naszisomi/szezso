@@ -47,7 +47,13 @@ export class SceneLayer {
       while (hi - lo > 1) { const m = (lo + hi) >> 1; if (bars[m].t <= t) lo = m; else hi = m; }
       logical = lo + (t - bars[lo].t) / Math.max(1, bars[hi].t - bars[lo].t);
     }
-    return this.chart.timeScale().logicalToCoordinate(logical);
+    // a Lightweight Charts az adatokon túli TÖRT logikai indexre 0-t ad (ettől nyúltak vissza a rajzok a chart bal szélére),
+    // ezért két egész index koordinátája között interpolálunk
+    const ts = this.chart.timeScale(), i0 = Math.floor(logical), fr = logical - i0;
+    const c0 = ts.logicalToCoordinate(i0);
+    if (c0 == null || fr === 0) return c0;
+    const c1 = ts.logicalToCoordinate(i0 + 1);
+    return c1 == null ? c0 : c0 + (c1 - c0) * fr;
   }
   y(p) { return this.series.priceToCoordinate(p); }
 

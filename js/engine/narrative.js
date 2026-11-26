@@ -128,28 +128,32 @@ export function target(ctx, dr, ref, minD, maxD, sess) {
 // ── rajz ──
 export function narrativeLayer(bars, barSec, ny, ctx, cfg = NR_DEFAULTS) {
   const items = [], N = bars.length;
-  if (barSec > 3600 || N < 50) return { items, info: null };
+  if (barSec > 3600 || N < 50) return { items, info: null, past: [] };
   const { s, get, rN, past } = narrativeState(bars, ny, cfg);
   const close = bars[N - 1].c, now = bars[N - 1].t;
-  for (const p of past) items.push({ type: "label", t: p.t, p: p.p, text: p.text, color: p.ok ? cfg.ok : cfg.bad, size: cfg.small, align: "center", vAlign: "above" });
-  if (!s.t0) return { items, info: null };
+  const R = info => ({ items, info, past });          // a múltbeli ✓/✗ értékelések az adatfülre mennek, nem a chartra
+  if (!s.t0) return R(null);
   const off = sess => { const m = parseSession(sess), A0 = parseSession(cfg.A)[0]; return [((m[0] - A0 + 1440) % 1440) * 60000, ((m[1] - A0 + 1440) % 1440) * 60000]; };
   const [, aE] = off(cfg.A), [lS, lE] = off(cfg.L), [nS, nE] = off(cfg.N), [, pE] = off(cfg.P);
   const tAs = s.t0, tAe = s.t0 + aE, tLs = s.t0 + lS, tLe = s.t0 + lE, tNs = s.t0 + nS, tNe = s.t0 + nE, tPe = s.t0 + pE;
-  if (!(s.ph >= 2 && s.ph <= 5) && !(s.ph === 6 && now <= tPe)) return { items, info: null };
+  const KZC = { A: "#2962FF", L: "#F23645", N: "#089981" };
+  const box = (t1, t2, hi, lo, c) => { if (isFinite(hi) && isFinite(lo) && t2 > t1) items.push({ type: "box", t1, t2, p1: Math.max(hi, lo), p2: Math.min(hi, lo), bg: c + "1A", border: c + "73", borderWidth: 1 }); };
+  const rng = (pts, t1, t2) => { let h = -Infinity, l = Infinity; for (const p of pts) if (p.t >= t1 && p.t <= t2) { h = Math.max(h, p.p); l = Math.min(l, p.p); } return [h, l]; };
+  if (s.ph === 1) { box(tAs, tAe, s.aH, s.aL, KZC.A); return R(null); }      // új Ázsia: az előző napi rajz eltűnik
+  if (!(s.ph >= 2 && s.ph <= 5) && !(s.ph === 6 && now <= tPe)) return R(null);
   const ar = Math.max(s.aH - s.aL, 1e-9), avN = avg(rN), a = ctx.atr14 ? ctx.atr14[N - 1] : ar;
   const minD = a * 0.1, maxD = isNaN(avN) ? a * 20 : Math.max(avN * 2.5, a * 3);
-  const poly = (pts, color, width) => {
+  const poly = (pts, color, width, style = "dashed") => {
     const q = []; for (const p of pts) if (!q.length || p.t > q[q.length - 1].t) q.push(p);
-    if (q.length >= 2) items.push({ type: "poly", points: q, color, width, style: "dashed", arrow: true });
+    if (q.length >= 2) items.push({ type: "poly", points: q, color, width, style, arrow: true });
   };
   const zz = (pts, t0, t1, p0, p1, amp, n) => {
     if (!pts.length) pts.push({ t: t0, p: p0 });
     for (let k = 1; k <= n; k++) pts.push({ t: t0 + Math.round((t1 - t0) * k / n), p: k === n ? p1 : p0 + (p1 - p0) * k / n + (k % 2 ? amp : -amp) });
   };
   const lbl = (t, p, big, small, color) => {
-    items.push({ type: "label", t, p, text: big, color, size: cfg.big, align: "left", vAlign: "middle", bold: true });
-    if (small) items.push({ type: "label", t, p, text: small, color, size: cfg.small, align: "left", vAlign: "below" });
+    items.push({ type: "label", t, p, text: big, color, size: cfg.big, align: "right", vAlign: "above", bold: true });
+    if (small) items.push({ type: "label", t, p, text: small, color, size: cfg.small, align: "right", vAlign: "below" });
   };
   const lonSeg = (pts, k, real) => {
     const st = s.aC, tm = tLs + Math.round((tLe - tLs) * 0.6);
@@ -179,8 +183,7 @@ export function narrativeLayer(bars, barSec, ny, ctx, cfg = NR_DEFAULTS) {
   const pa = [];
   if (s.aSt === "R") pa.push({ t: tAs, p: s.aO }, { t: tAs + (tAe - tAs) * 0.2, p: s.aH }, { t: tAs + (tAe - tAs) * 0.4, p: s.aL }, { t: tAs + (tAe - tAs) * 0.6, p: s.aH }, { t: tAs + (tAe - tAs) * 0.8, p: s.aL }, { t: tAe, p: s.aC });
   else zz(pa, tAs, tAe, s.aSt === "XU" ? s.aL : s.aH, s.aSt === "XU" ? s.aH : s.aL, 0.12 * ar, 4);
-  pa.push({ t: tLs, p: s.aC });
-  poly(pa, cfg.neutral, 2);
+  box(tAs, tAe, s.aH, s.aL, KZC.A);
   const info = { scenarios: [] };
   if (s.ph <= 3) {
     const sHi = s.ph === 3 && s.lH > s.aH, sLo = s.ph === 3 && s.lL < s.aL, nA = get("A" + s.aSt), cands = [];
@@ -199,11 +202,18 @@ export function narrativeLayer(bars, barSec, ny, ctx, cfg = NR_DEFAULTS) {
       const c = cfg.colors[i], pts = [], lEnd = lonSeg(pts, k, false), lHi = Math.max(s.aH, lEnd), lLo = Math.min(s.aL, lEnd);
       let tgt = null, tg = "";
       if (cid === 1 || cid === 2) { const r = target(ctx, cdr, cdr > 0 ? lHi : lLo, minD, maxD, s); tgt = r.t != null ? r.t : lEnd + cdr * ar; tg = r.tag; }
+      const nyStart = pts.length;
       nySeg(pts, cid, cdr, lEnd, tgt, lHi, lLo);
-      poly(pts, c, i === 0 ? 3 : 2);
+      if (i === 0) {
+        const [lh, ll] = rng(pts.slice(0, nyStart), tLs, tLe), [nh, nl] = rng(pts.slice(nyStart), tNs, tNe);
+        box(tLs, tLe, s.ph === 3 ? Math.max(lh, s.lH) : lh, s.ph === 3 ? Math.min(ll, s.lL) : ll, KZC.L);
+        box(tNs, tNe, nh, nl, KZC.N);
+        poly(pa.concat(pts), c, 2, "solid");
+      } else poly(pts, c, 2);
       const e = pts[pts.length - 1], vt = cdr ? votes(ctx, cdr, close) : null;
       const det = `London ${pct(get("A" + key), nA)} × NY ${pct(nS, nP)}` + (tgt == null ? "" : ` · cél ${+tgt.toPrecision(6)}${tg ? " (" + tg + ")" : ""}`) + (vt ? " · " + vt.text : "");
-      lbl(tNe, e.p, title(s.aSt, k, cid) + (cdr > 0 ? " ↑ " : cdr < 0 ? " ↓ " : " ") + pc, det, c);
+      if (i === 0) lbl(tNe, e.p, title(s.aSt, k, cid) + (cdr > 0 ? " ↑ " : cdr < 0 ? " ↓ " : " ") + pc, det, c);
+      else lbl(tNe, e.p, `${i + 1}. ${cdr > 0 ? "↑" : cdr < 0 ? "↓" : "↔"} ${pc.replace(/ \(.*\)/, "")}`, "", c);   // a részletek az adatfülön
       info.scenarios.push({ rank: i, id: cid, dir: cdr, title: title(s.aSt, k, cid), prob: nA > 0 && !isNaN(pS) ? pL * pS : null, target: tgt, tag: tg, votes: vt });
     });
   } else {
@@ -215,8 +225,11 @@ export function narrativeLayer(bars, barSec, ny, ctx, cfg = NR_DEFAULTS) {
     const ref = s.ph === 6 ? s.yO : close, pts = [], lEnd = lonSeg(pts, s.lSt, true), p0 = s.ph >= 5 ? s.yO : lEnd;
     let tgt = null, tg = "";
     if (sid === 1 || sid === 2) { const r = target(ctx, sdr, ref, minD, maxD, s); tgt = r.t != null ? r.t : ref + sdr * ar; tg = r.tag; }
+    const nyStart = pts.length;
     nySeg(pts, sid, sdr, p0, tgt, s.lH, s.lL);
-    poly(pts, c, altFirst ? 2 : 3);
+    box(tLs, tLe, s.lH, s.lL, KZC.L);
+    if (!altFirst) { const [nh, nl] = rng(pts.slice(nyStart), tNs, tNe); box(tNs, tNe, nh, nl, KZC.N); }
+    poly(altFirst ? pts : pa.concat(pts), c, 2, altFirst ? "dashed" : "solid");
     const e = pts[pts.length - 1], vt = sdr && sid !== 4 ? votes(ctx, sdr, close) : null;
     const det = `NY ${pct(nS, nP)} (n=${nP})` + (tgt == null ? "" : ` · cél ${+tgt.toPrecision(6)}${tg ? " (" + tg + ")" : ""}`) +
       (sid === 3 ? ` · London-sáv közepe ${+((s.lH + s.lL) / 2).toPrecision(6)}` : "") + (vt ? " · " + vt.text : "");
@@ -227,13 +240,14 @@ export function narrativeLayer(bars, barSec, ny, ctx, cfg = NR_DEFAULTS) {
       if (r2.t != null) {
         const p2 = [], a0 = s.ph >= 5 ? s.yO : lEnd;
         p2.push({ t: tNs, p: a0 }); zz(p2, tNs, tNe, a0, r2.t, 0.15 * Math.abs(r2.t - a0), 4);
-        poly(p2, cA, altFirst ? 3 : 2);
+        if (altFirst) { const [nh, nl] = rng(p2, tNs, tNe); box(tNs, tNe, nh, nl, KZC.N); poly(pa.concat(pts.slice(0, nyStart), p2), cA, 2, "solid"); }
+        else poly(p2, cA, 2);
         const v2 = votes(ctx, adr, close);
-        lbl(tNe, r2.t, (sid === 3 ? "ha folytatja " : "ha nem ") + (adr > 0 ? "↑ " : "↓ ") + (nP > 0 ? "esély " + pct(nP - nS, nP) : "esély ?"), `cél ${+r2.t.toPrecision(6)} (${r2.tag}) · ${v2.text}`, cA);
+        lbl(tNe, r2.t, (sid === 3 ? "ha folytatja " : "ha nem ") + (adr > 0 ? "↑ " : "↓ ") + (nP > 0 ? "esély " + pct(nP - nS, nP) : "esély ?"), altFirst ? `cél ${+r2.t.toPrecision(6)} (${r2.tag}) · ${v2.text}` : "", cA);
         info.scenarios.push({ rank: 1, id: sid === 3 ? 2 : sid, dir: adr, title: "alternatíva", prob: nP > 0 ? (nP - nS) / nP : null, target: r2.t, tag: r2.tag, votes: v2 });
       }
     }
   }
   info.session = { aH: s.aH, aL: s.aL, lH: s.lH, lL: s.lL, ph: s.ph, aSt: s.aSt, lSt: s.lSt, t0: s.t0, tLs, tLe, tNs, tNe, tPe };
-  return { items, info };
+  return R(info);
 }

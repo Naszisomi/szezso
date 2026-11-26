@@ -16,7 +16,7 @@ import { wyckoff } from "./wyckoff.js";
 import { weeklyProfile } from "./weekly.js";
 import { confluence, confluenceLayer } from "./confluence.js";
 import { narrativeLayer } from "./narrative.js";
-import { tradePlan, tradeLayer, tradeText } from "./trade.js";
+import { planPair } from "./trade.js";
 import { dgtMove, mostTouched, premiumDiscount, goldenPocketZones, elliott, oteAbc, pois, angleStructure } from "./struct2.js";
 import { tgif, tgifLayer, volDivergence, volDivLayer } from "./extra.js";
 
@@ -35,7 +35,7 @@ export const LAYERS = [
 ];
 
 // input: { bars, barSec, daily, layers:{kz:true,...} } -> { items, ctx, barColors }
-export function runEngine({ bars, barSec, daily, layers, tick }) {
+export function runEngine({ bars, barSec, daily, layers, tick, plan, minGap }) {
   const items = [];
   if (!bars.length) return { items, ctx: null };
   const ny = nyClock(bars);
@@ -73,8 +73,8 @@ export function runEngine({ bars, barSec, daily, layers, tick }) {
   ctx.milanaTargets = milItems.flatMap(it => it.type === "line" && it.p1 === it.p2 ? [it.p1] : it.type === "box" ? [it.p1, it.p2] : []);
   const nr = narrativeLayer(bars, barSec, ny, ctx);
   ctx.nr = nr.info;
-  ctx.plan = tradePlan(bars, ctx, milItems);
-  ctx.planText = tradeText(ctx.plan);
+  ctx.nrPast = nr.past;
+  if (plan) ctx.plans = planPair(bars, ctx, milItems, minGap);
 
   if (layers.kz) items.push(...kzLayer(bars, barSec, ny, sessions, daily, KZ_DEFAULTS));
   if (layers.milana) items.push(...milItems);
@@ -85,7 +85,6 @@ export function runEngine({ bars, barSec, daily, layers, tick }) {
   if (layers.voldiv) items.push(...volDivLayer(bars, ctx.voldiv));
   if (layers.cf) items.push(...confluenceLayer(bars, barSec, ctx.cf));
   if (layers.ict) items.push(...nr.items);
-  if (layers.plan) items.push(...tradeLayer(bars, barSec, ctx.plan));
   const barColors = layers.crt ? crtColors(bars) : null;
   return { items, ctx, barColors };
 }

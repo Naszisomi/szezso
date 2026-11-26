@@ -17,11 +17,12 @@ self.onmessage = e => {
   }
   if (m.daily !== undefined) s.daily = m.daily;
   state.set(m.id, s);
-  let items = [], codes = new Uint8Array(0);
+  let items = [], codes = new Uint8Array(0), plans = null;
   try {
-    const r = runEngine({ bars: s.bars, barSec: m.barSec, daily: s.daily, layers: m.layers, tick: m.tick });
-    items = r.items;
+    const r = runEngine({ bars: s.bars, barSec: m.barSec, daily: s.daily, layers: m.layers, tick: m.tick, plan: m.plan, minGap: m.minGap });
+    items = m.plan ? [] : r.items;
+    if (m.plan) plans = r.ctx && r.ctx.plans;
     if (r.barColors) { codes = new Uint8Array(s.bars.length); r.barColors.forEach((c, i) => { if (c) codes[i] = CODE[c] || 0; }); }
   } catch (err) { self.postMessage({ id: m.id, seq: m.seq, error: String(err && err.message || err) }); return; }
-  self.postMessage({ id: m.id, seq: m.seq, items, codes, hasColors: codes.length > 0, t0: s.bars.length ? s.bars[0].t : 0 }, [codes.buffer]);
+  self.postMessage({ id: m.id, seq: m.seq, items, plans, codes, hasColors: codes.length > 0, t0: s.bars.length ? s.bars[0].t : 0 }, [codes.buffer]);
 };
