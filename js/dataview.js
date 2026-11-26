@@ -2,8 +2,9 @@
 // -értékelések, az indikátorok és a Gann-naptár – szövegesen, hogy a chart tiszta maradhasson.
 const fmtT = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 const fmtD = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "short", day: "numeric" });
-const STATE = { "vár": "vár", "aktív": "aktív", "részben": "részben zárva", "lezárva": "lezárva", "lejárt": "lejárt" };
-const ROLE = { full: "egyben zár (TP1)", split: "50/30/20", swing: "swing 50/30/20" };
+const STATE = { "vár": "vár", "aktív": "aktív", "részben": "részben zárva", "védett": "pozitív stoppal", "lezárva": "lezárva", "lejárt": "lejárt" };
+const ROLE = { full: "egyben zár (TP1)", split: "50/30/20 + SL+", swing: "swing (TP2/TP3/1D)" };
+export const money = (x, sim) => x == null || !isFinite(x) ? "–" : `${x >= 0 ? "+" : ""}${x.toFixed(2)}${sim && sim.hype ? " $" : ""}`;
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const pct = x => x == null || isNaN(x) ? "–" : Math.round(x * 100) + "%";
 
@@ -14,7 +15,7 @@ export function biasText(info, f) {
 }
 
 export function renderData(el, key, inst, plans) {
-  const d = plans.data.get(key), info = d && d.info, hist = plans.history(key);
+  const d = plans.data.get(key), info = d && d.info, hist = plans.history(key), sim = plans.sim(key);
   const dec = String(inst.tick).includes(".") ? String(inst.tick).split(".")[1].length : 0;
   const f = x => x == null || !isFinite(x) ? "–" : (+x).toFixed(dec);
   const out = [];
@@ -22,20 +23,20 @@ export function renderData(el, key, inst, plans) {
   out.push(`<h2>${esc(inst.name)}</h2>`);
   out.push(`<p class="big">${last ? "Ár: <b>" + f(last.c) + "</b>" : "Adatok betöltése…"}${info && info.bias.dir ? ` · <b class="${info.bias.dir > 0 ? "up" : "dn"}">${esc(biasText(info, f))}</b> <span class="muted">(${esc(info.bias.src)})</span>` : ""}</p>`);
 
-  // napi tervek számlánként
+  // napi tervek számlánként (a folyamatos rács kereskedései)
   const today = hist.length ? hist.filter(r => r.T === hist[0].T) : [];
   if (!hist.length) out.push(`<p class="muted">Még nincs rögzített terv (az Ázsia vége után, 06:00-kor készül).</p>`);
-  for (const r of today) out.push(planTable(r, f, true));
-  // előző napok
+  for (const r of today) out.push(planTable(r, f, true, sim));
+  const running = sim ? sim.trades.filter(t => t.day !== (hist[0] && hist[0].T) && ["aktív", "részben", "védett"].includes(t.state)) : [];
+  if (running.length) out.push(`<h3>Korábbi napokról még futó kereskedések</h3>` + tradeTable(running, f, sim, true));
   const prev = hist.filter(r => !today.includes(r));
   if (prev.length) {
-    out.push(`<h3>Előző napok</h3><table><tr><th>Nap</th><th>Irány</th><th>Fő entry</th><th>Számlák</th><th>Eredmény (pont × adag)</th></tr>`);
+    out.push(`<h3>Előző napok</h3><table><tr><th>Nap</th><th>Irány</th><th>Alap entry</th><th>Kereskedések</th><th>Nettó eredmény</th></tr>`);
     for (const r of prev) {
-      const act = r.accounts.filter(a => a.filled), pnl = r.accounts.reduce((s, a) => s + a.pnl, 0);
-      const cnt = {}; for (const a of r.accounts) cnt[a.state] = (cnt[a.state] || 0) + 1;
+      const net = r.trades.reduce((s, t) => s + t.realized - t.fees, 0), cnt = {};
+      for (const t of r.trades) cnt[t.state] = (cnt[t.state] || 0) + 1;
       out.push(`<tr><td>${esc(r.day)}</td><td class="${r.plan.dir > 0 ? "up" : "dn"}">${r.plan.dir > 0 ? "LONG" : "SHORT"}</td><td>${f(r.plan.entry.p)}</td>` +
-        `<td>${Object.entries(cnt).map(([k, v]) => `${v} ${esc(STATE[k] || k)}`).join(", ")}${act.length ? "" : ""}</td><td>${act.length ? (pnl >= 0 ? "+" : "") + f(pnl) : "–"}</td></tr>`);
-      out.push(`<tr><td></td><td colspan="4">${planTable(r, f, false)}</td></tr>`);
+        `<td>${Object.entries(cnt).map(([k, v]) => `${v} ${esc(STATE[k] || k)}`).join(", ")}</td><td>${money(net, sim)}</td></tr>`);
     }
     out.push(`</table>`);
   }
@@ -76,20 +77,23 @@ export function renderData(el, key, inst, plans) {
   el.innerHTML = out.join("");
 }
 
-function planTable(r, f, full) {
+function planTable(r, f, full, sim) {
   const p = r.plan, side = p.dir > 0 ? "LONG" : "SHORT", cls = p.dir > 0 ? "up" : "dn";
-  const h = [];
-  if (full) h.push(`<h3 class="${cls}">${side} – ${esc(r.day)}${r.primary ? " · valószínűbb irány" : ""}${p.revised ? " · London után frissítve" : ""}</h3>` +
-    `<p class="muted">Entry oka: ${esc(p.entry.why)}${p.why ? " · " + esc(p.why) : ""}${p.prob != null ? " · esély " + pct(p.prob) : ""}${p.votes ? " · " + esc(p.votes) : ""}</p>`);
-  h.push(`<table class="plan"><tr><th>Számla</th><th>Állapot</th><th>Szerep</th><th>Entry</th><th>DCA1</th><th>DCA2</th><th>DCA3</th><th>Átlag / adag</th><th>TP1</th><th>TP2</th><th>TP3</th><th>SL+</th><th>Eredmény</th></tr>`);
-  for (const a of r.accounts) {
+  return `<h3 class="${cls}">${side} – ${esc(r.day)}${r.primary ? " · valószínűbb irány" : ""}${p.revised ? " · London után frissítve" : ""}</h3>` +
+    `<p class="muted">Alap (entry 1) oka: ${esc(p.entry.why)}${p.why ? " · " + esc(p.why) : ""}${p.prob != null ? " · esély " + pct(p.prob) : ""}${p.votes ? " · " + esc(p.votes) : ""}</p>` +
+    (r.trades.length ? tradeTable(r.trades.filter(t => t.state !== "lejárt" || t.filled), f, sim, false) : `<p class="muted">Nincs kereskedés.</p>`);
+}
+
+export function tradeTable(trades, f, sim, showDay) {
+  const h = [`<table class="plan"><tr>${showDay ? "<th>Nap</th>" : ""}<th>Számla</th><th>Irány</th><th>Állapot</th><th>Szerep</th><th>Egység</th><th>Entry</th><th>DCA1</th><th>DCA2</th><th>DCA3</th><th>Átlag / menny.</th><th>TP1 (15m)</th><th>TP2 (1h)</th><th>TP3 (4h)</th><th>Swing (1D)</th><th>SL+</th><th>Nettó</th></tr>`];
+  for (const t of trades) {
     const ok = (x, done) => `${f(x)}${done ? " ✓" : ""}`;
-    const share = a.role === "full" ? [1, 0, 0] : [0.5, 0.3, 0.2];
-    h.push(`<tr><td>${a.acc}</td><td>${esc(STATE[a.state] || a.state)}</td><td>${a.role ? esc(ROLE[a.role]) : "–"}</td>` +
-      [a.entry, ...a.dca].map((l, i) => `<td>${ok(l.p, i < a.filled)}</td>`).join("") +
-      `<td>${a.avg != null ? f(a.avg) + " / " + a.units : "–"}</td>` +
-      a.tps.map((t, i) => `<td title="${esc(t.why)}">${share[i] ? ok(t.p, i < a.tpHit) + ` <span class="muted">${Math.round(share[i] * 100)}%</span>` : "–"}</td>`).join("") +
-      `<td>${a.stop != null ? f(a.stop) : "–"}</td><td>${a.exits.length ? (a.pnl >= 0 ? "+" : "") + f(a.pnl) : "–"}</td></tr>`);
+    h.push(`<tr>${showDay ? `<td>${esc(fmtD.format(t.day))}</td>` : ""}<td>${t.acc}</td><td class="${t.dir > 0 ? "up" : "dn"}">${t.dir > 0 ? "long" : "short"}</td><td>${esc(STATE[t.state] || t.state)}</td><td>${t.role ? esc(ROLE[t.role]) : "–"}</td>` +
+      `<td>${sim && sim.hype ? t.unit + " HYPE" : "–"}</td>` +
+      t.legs.map((l, i) => `<td>${ok(l.p, i < t.filled)}</td>`).join("") +
+      `<td>${t.avg != null ? f(t.avg) + (sim && sim.hype ? " / " + t.qty.toFixed(1) : "") : "–"}</td>` +
+      (t.tps || [null, null, null, null]).map((x, i) => `<td title="${esc(x && x.why)}">${x && t.shares[i] ? ok(x.p, t.tpHit.includes(i)) + ` <span class="muted">${Math.round(t.shares[i] * 100)}%</span>` : "–"}</td>`).join("") +
+      `<td>${t.stop != null ? f(t.stop) : "–"}</td><td>${t.exits.length || t.fills.length ? money(t.realized - t.fees + (t.unreal || 0), sim) + (t.unreal ? ' <span class="muted">(nyitott)</span>' : "") : "–"}</td></tr>`);
   }
   h.push(`</table>`);
   return h.join("");

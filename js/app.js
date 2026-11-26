@@ -10,6 +10,7 @@ import { milanaHistoryFrom } from "./ind/milana.js";
 import { runEngine, LAYERS } from "./engine/index.js";
 import { PlanManager } from "./plans.js";
 import { renderData, biasText } from "./dataview.js";
+import { renderPaper } from "./paperview.js";
 
 // Rétegek ki-be kapcsolása (a részletes beállítások az 5. lépésben jönnek)
 const layers = Object.fromEntries(LAYERS.map(l => [l.key, getPref("layer." + l.key, l.def)]));
@@ -31,6 +32,7 @@ const TABS = [
   { id: "6HYPE", label: "6×HYPE", layout: "six", cells: ACCOUNTS.map(a => ["HYPE", a]) },
   { id: "TRIO", label: "HYPE·BTC·BNB", layout: "three", cells: [["HYPE", null], ["BTC", null], ["BNB", null]] },
   ...["HYPE", "BTC", "BNB"].map(k => ({ id: "d" + k, label: k + " adat", layout: "data", key: k, cells: [] })),
+  { id: "PAPER", label: "Papír", layout: "data", key: "HYPE", paper: true, cells: [] },
 ];
 const UP = "#089981", DOWN = "#F23645";
 
@@ -309,8 +311,7 @@ const plans = new PlanManager({
   onChange: key => {
     plansVer++;
     for (const ds of hub.sets.values()) if (ds.key === key && !ds.dead) { ds.mergeScene(); for (const p of ds.panels) { p.applyResult(false); p.setTitle(); } }
-    const v = views.get("d" + key);
-    if (v && current === "d" + key) renderData(v.el, key, INSTRUMENTS[key], plans);
+    renderInfoTab(key);
   },
 });
 plans.rsiTf = getPref("rsiTf", "1h");
@@ -492,6 +493,17 @@ function buildView(tab) {
   return { el, panels };
 }
 
+// adat- és papírfül újrarajzolása (csak ha épp az látszik)
+function renderInfoTab(key) {
+  const tab = TABS.find(t => t.id === current);
+  if (!tab || tab.layout !== "data" || tab.key !== key) return;
+  const v = views.get(current);
+  if (!v) return;
+  const top = v.el.scrollTop;
+  if (tab.paper) renderPaper(v.el, plans, key, () => renderInfoTab(key));
+  else renderData(v.el, key, INSTRUMENTS[key], plans);
+  v.el.scrollTop = top;
+}
 function showTab(id) {
   current = id; setPref("tab", id);
   const tab = TABS.find(t => t.id === id);
@@ -499,7 +511,7 @@ function showTab(id) {
   for (const [vid, v] of views) v.el.style.display = vid === id ? "" : "none";
   const v = views.get(id);
   for (const p of v.panels) p.attach(hub.get(p.key));
-  if (tab.layout === "data") renderData(v.el, tab.key, INSTRUMENTS[tab.key], plans);
+  if (tab.layout === "data") renderInfoTab(tab.key);
   buildTabs();
 }
 
