@@ -7,7 +7,7 @@ import { nyToUtc, nyDate } from "./ind/milana.js";
 import { tpsFor, UNITS } from "./engine/tradeutil.js";
 
 const H = 3600000, DAY = 86400000, KEEP_DAYS = 14;
-const COL = { entry: "#2962FF", dca: "#FF9800", tp: "#089981", old: "#8D6E63" };
+const COL = { long: "#089981", short: "#F23645", done: "#9E9E9E", old: "#8D6E63" };   // long zöld, short piros, teljesült szürke, előző napi barna
 const fmtDay = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "short", day: "numeric" });
 
 function asiaClose(ms, back = 0) {           // a NY-nap kezdete (= az Ázsia-killzone vége), back nappal korábban
@@ -29,21 +29,22 @@ function slim(p) {
 export function evalPlan(p, bars, T, now) {
   const legs = [p.entry, ...p.dca], d = p.dir;
   const touch = (b, x) => d > 0 ? b.l <= x : b.h >= x, reach = (b, x) => d > 0 ? b.h >= x : b.l <= x;
-  let filled = 0, q = 0, v = 0, avg = null, tps = tpsFor(p, p.entry.p), state = "vár", lastFill = -1, closeT = null, closeP = null;
+  let filled = 0, q = 0, v = 0, avg = null, tps = tpsFor(p, p.entry.p), state = "vár", lastFill = -1, closeT = null, closeP = null, tpHit = 0;
   const t0 = p.from || T;                       // a London utáni frissített terv csak onnan figyel
   for (let i = 0; i < bars.length; i++) {
     const b = bars[i];
     if (b.t < t0) continue;
     if (state === "vár" && b.t >= T + DAY) { state = "lejárt"; break; }
+    if (state === "lezárva") { while (tpHit < 3 && reach(b, tps[tpHit].p)) tpHit++; if (tpHit === 3) break; continue; }
     if (state === "vár" || state === "aktív") {
       let n = 0;
       while (filled < 4 && touch(b, legs[filled].p)) { q += UNITS[filled]; v += UNITS[filled] * legs[filled].p; filled++; n++; }
       if (n) { state = "aktív"; avg = v / q; tps = tpsFor(p, avg); lastFill = i; continue; }
-      if (state === "aktív" && i > lastFill && reach(b, tps[0].p)) { state = "lezárva"; closeT = b.t; closeP = tps[0].p; break; }
+      if (state === "aktív" && i > lastFill && reach(b, tps[0].p)) { state = "lezárva"; closeT = b.t; closeP = tps[0].p; tpHit = 1; while (tpHit < 3 && reach(b, tps[tpHit].p)) tpHit++; }
     }
   }
   if (state === "vár" && now >= T + DAY) state = "lejárt";
-  return { state, filled, avg, tps, closeT, closeP };
+  return { state, filled, avg, tps, closeT, closeP, tpHit };
 }
 
 export class PlanManager {
@@ -134,19 +135,18 @@ export class PlanManager {
     for (const r of h) {
       const today = r.T === T0;
       if (!today && r.state !== "aktív") continue;          // korábbi napokból csak a még futó (barna)
-      const p = r.plan, side = p.dir > 0 ? "LONG" : "SHORT", old = !today;
+      const p = r.plan, sd = p.dir > 0 ? "L" : "S", old = !today;
       const t1 = Math.min(Math.max(r.T, lastT - 40 * barSec * 1000), lastT - 12 * barSec * 1000), pre = old ? `${r.day} ` : "";
-      const w = old ? 2 : r.primary ? 3 : 2, fade = r.state === "lezárva" || r.state === "lejárt";
-      const c = x => old ? COL.old : fade ? "#9E9E9E" : x;
-      const row = (y, text, color, width, style) => {
+      const w = !old && r.primary ? 3 : 2, base = old ? COL.old : p.dir > 0 ? COL.long : COL.short;
+      const row = (y, text, done, width, style) => {
+        const color = done ? COL.done : base;
         items.push({ type: "line", t1, p1: y, t2, p2: y, color, width, style });
         items.push({ type: "label", t: t2, p: y, text, color, size: 12, align: "right", vAlign: "above", bold: width > 2, bg: "rgba(255,255,255,0.85)" });
       };
-      // a címkén csak a megnevezés és az ár; adag, állapot, átlagár az adatfülön
+      // címke: LE / LDCA1 / LTP1 (short: SE / SDCA1 / STP1) + ár; entry folytonos, DCA pöttyös, TP szaggatott
       [p.entry, ...p.dca].forEach((l, i) =>
-        row(l.p, `${pre}${side} ${i ? "DCA" + i : "ENTRY"} ${f(l.p)}`, c(i ? COL.dca : COL.entry), i ? Math.max(1, w - 1) : w, i ? "dashed" : "solid"));
-      if (r.state === "vár" || r.state === "aktív")
-        r.tps.forEach((t, i) => row(t.p, `${pre}${side} TP${i + 1} ${f(t.p)}`, c(COL.tp), Math.max(1, w - 1), "dashed"));
+        row(l.p, `${pre}${sd}${i ? "DCA" + i : "E"} ${f(l.p)}`, i < r.filled, i ? Math.max(1, w - 1) : w, i ? "dotted" : "solid"));
+      r.tps.forEach((t, i) => row(t.p, `${pre}${sd}TP${i + 1} ${f(t.p)}`, i < r.tpHit, Math.max(1, w - 1), "dashed"));
     }
     return items;
   }
