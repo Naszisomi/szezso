@@ -66,7 +66,7 @@ export function tradePlan(bars, ctx, milItems, dir, minGap) {
   const levels = all.map(x => ({ p: x.p, why: x.why })).sort((x, y) => x.p - y.p);
   const sc = ctx.nr && ctx.nr.scenarios && ctx.nr.scenarios.find(s => s.dir === dir);
   return { dir, entry: { p: entry.p, why: entry.why }, dca: dca.map(d => ({ p: d.p, why: d.why })), units: UNITS, levels,
-    tpGap: a * 0.25, why: sc ? sc.title : "", prob: sc ? sc.prob : null, votes: sc && sc.votes ? sc.votes.text : "" };
+    tpGap: a * 0.25, gap, why: sc ? sc.title : "", prob: sc ? sc.prob : null, votes: sc && sc.votes ? sc.votes.text : "" };
 }
 
 export function planPair(bars, ctx, milItems, minGap) {

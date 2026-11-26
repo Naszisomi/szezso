@@ -249,12 +249,8 @@ class DataSet {
     }
     if (this.pending) setTimeout(() => this.compute(), 120);
   }
-  // a motor rajzai + a napi kereskedési tervek (külön számolva, az 1 órás adatokból)
-  mergeScene() {
-    const n = this.bars.length;
-    const pi = layers.plan && n ? plans.items(this.key, this.bars[n - 1].t, BARS[this.tf].sec) : [];
-    this.scene = { items: (this.engItems || []).concat(pi) };
-  }
+  // a motor rajzai (a napi tervek számlánként a panelekben kerülnek hozzá)
+  mergeScene() { this.scene = { items: this.engItems || [] }; }
   // a gyertya CRT színe (az eredmény a küldéskori gyertyákhoz igazodik, ezért idő szerint keressük)
   colorAt(i) {
     if (!this.codes || !this.bars.length) return null;
@@ -304,9 +300,10 @@ class DataSet {
   }
 }
 
+let plansVer = 0;
 const plans = new PlanManager({
   engine, fetchLatest, fetchOlder, merge, loadCandles, insts: INSTRUMENTS,
-  onChange: key => { for (const ds of hub.sets.values()) if (ds.key === key && !ds.dead) { ds.mergeScene(); for (const p of ds.panels) p.applyResult(false); } },
+  onChange: key => { plansVer++; for (const ds of hub.sets.values()) if (ds.key === key && !ds.dead) { ds.mergeScene(); for (const p of ds.panels) p.applyResult(false); } },
 });
 window.szezsoPlans = plans;   // az adatfülhöz és hibakereséshez
 setTimeout(() => { window.szezsoHub = hub; });
@@ -377,7 +374,7 @@ class ChartPanel {
       this.volLayer = new SceneLayer(() => this.ds ? this.ds.bars : [], () => this.ds ? this.ds.volScene : null, () => BARS[hub.tf].sec);
       this.volume.attachPrimitive(this.volLayer);
     }
-    this.layer = new SceneLayer(() => this.ds ? this.ds.bars : [], () => this.ds ? this.ds.scene : null, () => BARS[hub.tf].sec);
+    this.layer = new SceneLayer(() => this.ds ? this.ds.bars : [], () => this.ds ? this.panelScene() : null, () => BARS[hub.tf].sec);
     this.candles.attachPrimitive(this.layer);
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(r => { if (r && r.from < 30 && this.ds) this.ds.loadOlder(); this.scheduleHL(); });
     // a látható szakasz csúcsa és alja az ártengelyen (mint a TradingView-n)
@@ -420,6 +417,15 @@ class ChartPanel {
     this.setTitle();
   }
   // a motor új eredménye: ha a CRT színek változtak, újraszínez; különben csak az utolsó gyertya + rajzok
+  // a közös motorrajz + ennek a számlának a terve (Fő, Al1 … Al5; számla nélkül a Fő)
+  panelScene() {
+    const ds = this.ds, n = ds.bars.length;
+    if (this._sc && this._sc.base === ds.scene && this._sc.ver === plansVer && this._sc.last === (n && ds.bars[n - 1].t)) return this._sc.scene;
+    const pi = layers.plan && n ? plans.items(this.key, ds.bars[n - 1].t, BARS[ds.tf].sec, this.account) : [];
+    const scene = { items: ds.scene.items.concat(pi) };
+    this._sc = { base: ds.scene, ver: plansVer, last: n && ds.bars[n - 1].t, scene };
+    return scene;
+  }
   applyResult(recolor) {
     const ds = this.ds, bars = ds ? ds.bars : [];
     if (recolor) this.candles.setData(bars.map((b, i) => candlePoint(b, ds.colorAt(i))));

@@ -1,7 +1,9 @@
 // Gyertyatest-szakadások (rések) és CRT gyertyaszín – a szezsoT szabályai szerint.
 //  Rés: két egymást követő gyertya teste közötti űr. Felfelé zöld (két sárga CRT között sárga),
 //  lefelé piros (két lila CRT között lila). Csak a saját idősík egy későbbi, LEZÁRT, UGYANOLYAN
-//  IRÁNYÚ gyertyájának teste oldja fel, ha teljesen átmegy rajta (ekkor eltűnik); ha csak belelóg,
+//  IRÁNYÚ gyertyájának teste oldja fel, ha teljesen átmegy rajta (ekkor eltűnik) – vagy egymást követő,
+//  azonos irányú testek lánca, ha megszakítás nélkül (a következő test ott nyit, ahol az előző még tart)
+//  együtt fedik le; ha csak belelóg,
 //  szürke lesz. A ≥ 1 ATR rések sötétek, vastag kerettel; a kisebbek halványak.
 import { rgba } from "../draw.js";
 
@@ -33,18 +35,31 @@ export function crtFlags(b) {
 }
 
 // A rések számítása (a motor többi része is használja: célár, EGYEZÉS).
+// egymást követő azonos irányú testek lánca: [{i, lo, hi}], ellenkező irány, doji vagy testek közti űr megszakítja
+function chainCovers(ch, g) {
+  let lo = Infinity, hi = -Infinity;
+  for (let k = ch.length - 1; k >= 0 && ch[k].i > g.i; k--) {
+    lo = Math.min(lo, ch[k].lo); hi = Math.max(hi, ch[k].hi);
+    if (lo <= g.bot && hi >= g.top) return true;
+  }
+  return false;
+}
+
 export function computeGaps(bars, barSec, atrArr, cfg = GAP_DEFAULTS) {
   const gaps = [];
+  let up = [], dn = [];
   for (let i = 1; i < bars.length; i++) {
     const b = bars[i];
     if (!b.done) break;                               // csak lezárt gyertya (barstate.isconfirmed)
     const cTop = Math.max(b.o, b.c), cBot = Math.min(b.o, b.c);
+    if (b.c > b.o) { const l = up[up.length - 1]; if (!l || l.i !== i - 1 || cBot > l.hi) up = []; up.push({ i, lo: cBot, hi: cTop }); dn = []; }
+    else if (b.c < b.o) { const l = dn[dn.length - 1]; if (!l || l.i !== i - 1 || cTop < l.lo) dn = []; dn.push({ i, lo: cBot, hi: cTop }); up = []; }
+    else { up = []; dn = []; }
     // 1) a meglévők ellenőrzése
     for (let k = gaps.length - 1; k >= 0; k--) {
       const g = gaps[k];
       if (g.closed || i <= g.i) continue;
-      const sameDir = g.bull ? b.c > b.o : b.c < b.o;
-      if (sameDir && cBot <= g.bot && cTop >= g.top) { g.closed = true; g.end = i; gaps.splice(k, 1); continue; }
+      if (chainCovers(g.bull ? up : dn, g)) { g.closed = true; g.end = i; gaps.splice(k, 1); continue; }
       if (!g.wicked && (g.bull ? b.l <= g.top : b.h >= g.bot)) g.wicked = true;
     }
     // 2) új rés (a Hyperliquid → OKX illesztésnél nem: ott a két piac árkülönbsége nem valódi rés)
