@@ -15,16 +15,18 @@ let acc = "Összes", sub = "pos", mode = "all", view = "naplo";
 export function renderPaper(el, plans, key, rerender) {
   const sim = plans.sim(key), bal = plans.balances(), f = x => (+x).toFixed(3);
   if (!sim) { el.innerHTML = `<p class="muted">Adatok betöltése…</p>`; return; }
-  const sb = mode === "sb", all = mode === "all", sbs = sim.sb || { trades: [], events: [] };
+  const ext = mode === "ext", sb = mode === "sb" || ext, all = mode === "all", sbs = sim.sb || { trades: [], events: [] };
   // élő napló (befagyasztott) vagy újraszámolt (a mostani szabályokkal az egész múlt)
   const jv = journalView(updateJournal(sim, bal, RULES), sim), J = view === "naplo" && !!jv;
   const gT = J ? jv.trades.filter(t => t.acc !== "SB") : sim.trades, sT = J ? jv.trades.filter(t => t.acc === "SB") : sbs.trades;
   const gE = J ? jv.events.filter(e => e.acc !== "SB") : sim.events, sE = J ? jv.events.filter(e => e.acc === "SB") : sbs.events;
   const B = J ? { ...bal, ...jv.startBal } : bal;
-  const src = sb ? { trades: sT, events: sE } : all ? { trades: [...gT, ...sT], events: [...gE, ...sE].sort((a, b) => a.t - b.t) } : { trades: gT, events: gE };
+  const isExt = t => !!t.ext || t.window === "Extrém izo";
+  const extE = e => /^Extrém izo/.test(e.why || "");
+  const src = ext ? { trades: sT.filter(isExt), events: sE.filter(extE) } : sb ? { trades: sT.filter(t => !isExt(t)), events: sE.filter(e => !extE(e)) } : all ? { trades: [...gT, ...sT], events: [...gE, ...sE].sort((a, b) => a.t - b.t) } : { trades: gT, events: gE };
   const mine = t => sb || all || acc === "Összes" || t.acc === acc;
   const trades = src.trades.filter(mine), events = src.events.filter(e => sb || all || acc === "Összes" || e.acc === acc);
-  const ordTrades = (sb ? sbs.trades : all ? [...sim.trades, ...sbs.trades] : sim.trades).filter(mine);     // élő megbízások: mindig a mostani szabályokból
+  const ordTrades = (ext ? sbs.trades.filter(isExt) : sb ? sbs.trades.filter(t => !isExt(t)) : all ? [...sim.trades, ...sbs.trades] : sim.trades).filter(mine);     // élő megbízások: mindig a mostani szabályokból
   const start = sb ? B.SB : all ? ALL_ACC.reduce((s, a) => s + B[a], 0) : acc === "Összes" ? ACC_NAMES.reduce((s, a) => s + B[a], 0) : B[acc];
   const haltOn = [sim.halts, sbs.halts].some(h => h && h.length && h[h.length - 1].on);
   const realized = events.reduce((s, e) => s + e.pnl, 0);
@@ -39,7 +41,13 @@ export function renderPaper(el, plans, key, rerender) {
   o.push(`<p class="muted">Szabályverzió: v${RULES.v} (${RULES.date}). ${J ? `Napló indult: ${fmtT.format(jv.start)} (előtte a v1 szabályokkal újraszámolt múlt a kiinduló) – ami bekerült, nem számolódik újra.` : `A mostani szabályokkal újrajátszva ${sim.days[0] ? fmtT.format(sim.days[0].T) : "–"} óta (szebb, mint a valóság).`}</p>`);
   if (haltOn) o.push(`<p style="background:#FFEBEE;color:#B71C1C;padding:6px 10px;border-radius:6px"><b>VÉSZFÉK:</b> a fiók saját tőkéje 20 %-nál többet esett – új belépő nincs, csak a meglévők kezelése.</p>`);
   // a rács és a silver bullet külön: így a rácsos kereskedés statisztikája tiszta marad
-  o.push(`<div class="ptabs"><button data-mode="all" class="${all ? "on" : ""}">Összesen (rács + SB)</button><button data-mode="grid" class="${mode === "grid" ? "on" : ""}">Rács (cross)</button><button data-mode="sb" class="${sb ? "on" : ""}">Silver bullet (SB számla)</button></div>`);
+  o.push(`<div class="ptabs"><button data-mode="all" class="${all ? "on" : ""}">Összesen (rács + SB)</button><button data-mode="grid" class="${mode === "grid" ? "on" : ""}">Rács (cross)</button><button data-mode="sb" class="${sb && !ext ? "on" : ""}">Silver bullet (SB számla)</button><button data-mode="ext" class="${ext ? "on" : ""}">Extrém izo (SB számla)</button></div>`);
+  if (ext) {
+    const x = sbs.extNow, v = n => n == null || !isFinite(n) ? "–" : Math.round(n);
+    const near = x && ((x.r15 < 30 && x.r1h < 30) || (x.r15 > 70 && x.r1h > 70));
+    o.push(`<p class="muted">Jel: long, ha a 15m és az 1h RSI < 20 és a 15m J < 0; short, ha RSI > 80 és J > 100 (Ázsiában is). Izolált, a margin ≤ az SB tőke 10 %-a (+20 $ védelem), 2 DCA, zárás a vastag vonalnál vagy az RSI/KDJ megállításakor.</p>`);
+    o.push(`<p>Most (utolsó lezárt gyertyák): 15m RSI <b>${v(x && x.r15)}</b> · 1h RSI <b>${v(x && x.r1h)}</b> · 15m J <b>${v(x && x.j15)}</b>${near ? " – <b>közel az extrém zónához</b>" : ""}</p>`);
+  }
   if (!sb && !all) o.push(`<div class="ptabs">${["Összes", ...ACC_NAMES].map(a => `<button data-acc="${a}" class="${a === acc ? "on" : ""}">${a}</button>`).join("")}</div>`);
   o.push(`<div class="cards">` + [
     ["Egyenleg", usd(start + realized, false)], ["Saját tőke (equity)", usd(start + realized + unreal, false)],

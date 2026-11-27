@@ -97,8 +97,8 @@ export function simulateSB(bars, cfg) {
   // 2 DCA a vastag vonalakon; méret: a margin (izolált, a 20 $-os további mozgást is kibírja, mindhárom láb kitelve)
   // legfeljebb az SB tőke 10 %-a. Zárás egyben, ami előbb jön: a legközelebbi vastag egyezésvonal az átlagártól ≥ 1 $-ra,
   // vagy nyereségben a 15m RSI/KDJ megállítja (long: RSI ≥ 70 és J > 100; short: RSI ≤ 30 és J < 0). A TP mindig az átlagárból.
-  const b15 = to15(bars), b1h = [];
-  for (const x of b15) { const t = Math.floor(x.t / 3600000) * 3600000, y = b1h[b1h.length - 1];
+  const b15 = to15(bars), b1h = cfg.bars1h && cfg.bars1h.length > 30 ? cfg.bars1h.map(x => ({ t: x.t, o: x.o, h: x.h, l: x.l, c: x.c })) : [];   // az 1h RSI a valódi 1 órás gyertyákból
+  if (!b1h.length) for (const x of b15) { const t = Math.floor(x.t / 3600000) * 3600000, y = b1h[b1h.length - 1];
     if (y && y.t === t) { y.h = Math.max(y.h, x.h); y.l = Math.min(y.l, x.l); y.c = x.c; } else b1h.push({ t, o: x.o, h: x.h, l: x.l, c: x.c }); }
   const r15 = rsi(b15.map(x => x.c)), J15 = kdj(b15).J, r1h = rsi(b1h.map(x => x.c));
   const at15 = []; { let a = 0; for (let k = 0; k < b15.length; k++) { const x = b15[k], p = b15[k - 1] || x, tr = Math.max(x.h - x.l, Math.abs(x.h - p.c), Math.abs(x.l - p.c)); a = k < 14 ? (a * k + tr) / (k + 1) : (a * 13 + tr) / 14; at15.push(a); } }
@@ -270,5 +270,7 @@ export function simulateSB(bars, cfg) {
   for (const t of trades) t.unreal = t.state === "aktív" ? t.dir * (last.c - t.avg) * t.open : 0;
   for (const w of logs) if (!w.fvg) w.log.push("nem alakult ki FVG az ablakban");
   const windows = logs.map(w => ({ t: w.t, window: WNAME[w.idx], log: w.log }));
-  return { trades, events, last, windows, curve, halts };
+  // az extrém jel mostani állása (a Papír fül „Extrém izo” nézetéhez)
+  const extNow = b15.length > 1 && b1h.length > 1 ? { r15: r15[b15.length - 2], r1h: r1h[b1h.length - 2], j15: J15[b15.length - 2], t15: b15[b15.length - 2].t } : null;
+  return { trades, events, last, windows, curve, halts, extNow };
 }

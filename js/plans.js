@@ -234,7 +234,7 @@ export class PlanManager {
     const filter = makeFilter(b5, b5 ? to15(b5) : d.bars15);
     const bal = this.balances(), tick = this.insts[key].tick;
     const gridCfg = { filter, tick, bal, remMode: getPref("paper.remMode", "a"), swan: SWAN, six: hype ? 6 : null, sized: hype, minTp2: (avg, p) => hype ? 2 : Math.max(2 * ((p && p.atr) || avg * 0.004), avg * 0.004) };
-    const sbRun = hype && d.bars5 && days[0] ? extEq => simulateSB(d.bars5.filter(b => b.t >= days[0].T), { filter, tick, sized: true, bal: bal.SB, swan: SWAN, extStart: ACC_NAMES.reduce((s, a) => s + bal[a], 0), extEq,
+    const sbRun = hype && d.bars5 && days[0] ? extEq => simulateSB(d.bars5.filter(b => b.t >= days[0].T), { filter, tick, sized: true, bal: bal.SB, swan: SWAN, extStart: ACC_NAMES.reduce((s, a) => s + bal[a], 0), extEq, bars1h: d.bars,
       // vastag egyezésvonalak a silver bullet belépőjéhez: az adott nap tervéből (15m, 1h, 4h)
       gpz: t => { const day = days.filter(x => x.T <= t).pop() || days[0]; return (day.long && day.long.cand && day.long.cand.gpz) || (day.short && day.short.cand && day.short.cand.gpz) || []; },
       cfLines: t => { const day = days.filter(x => x.T <= t).pop() || days[0]; return ["long", "short"].flatMap(k => day[k] && day[k].cand ? ["m15", "h1", "h4"].flatMap(f => (day[k].cand[f] && day[k].cand[f].cf) || []) : []).filter(g => g.n >= 5); } }) : null;
