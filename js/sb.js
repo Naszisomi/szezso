@@ -3,10 +3,11 @@
 // Szabályok (a megbeszéltek szerint):
 //  • Ablakok (NY idő): 03–04, 10–11, 14–15.
 //  • A silver bullet lényege, hogy az ár visszatér az FVG-hez: az FVG a CÉL, nem a belépő.
-//  • Az ablak első 5m FVG-je az ablak első felében derül ki; csak utána nyílhat kereskedés.
+//  • Az ablak első 5m FVG-je az ablakban derül ki (az első fél–egy órában); csak utána nyílhat kereskedés, legfeljebb
+//    3 órával az ablak vége után (de a következő ablak kezdetéig).
 //  • Ha az ár az FVG fölött van → short, alatta → long. A belépő limit a legközelebbi erős szinten az ár túloldalán
 //    (vastag egyezésvonal vagy Milana-nyitóvonal), a fals mozdulat végénél – pl. a 66-os egyezésvonalnál, onnan le az FVG-ig.
-//    Ha az ár előbb visszaér az FVG-hez, vagy az ablak vége után egy órával sem teljesül, a megbízás törlődik.
+//    Ha az ár előbb visszaér az FVG-hez, vagy addig sem teljesül, a megbízás törlődik. Ablakonként napló készül (miért nyílt / miért nem).
 //  • DCA: itt is 3 (1/1/2/4 egység), legalább 3 $ lépéssel.
 //  • TP: az FVG közelebbi széle (2 tickkel előtte), egyben zárva. Ha az ablakban nem jön össze, a kereskedés marad,
 //    és a TP a következő ablak FVG-jéhez igazodik.
@@ -16,7 +17,7 @@ import { nyOffset } from "./ind/milana.js";
 import { UNITS } from "./engine/tradeutil.js";
 import { unitFor } from "./grid.js";
 
-const MAKER = 0.0002;
+const MAKER = 0.0002, AFTER = 3 * 3600000;
 const WINDOWS = [[180, 240], [600, 660], [840, 900]];                 // percek NY idő szerint
 const OPENS = [["TWO", 18 * 60, true], ["TDO", 0], ["TAO", 20 * 60 + 30], ["TLO", 2 * 60 + 30], ["TNY", 8 * 60 + 30], ["NYAM", 9 * 60 + 30], ["TPM", 14 * 60 + 30]];
 
@@ -36,6 +37,7 @@ export function simulateSB(bars, cfg) {
     a = i < 14 ? (a * i + tr) / (i + 1) : (a * 13 + tr) / 14; atr.push(a * 1.73);
   }
   const lv = {}, fvgWait = {};
+  const logs = [];
   let win = null, lastWin = null, cur = null, pending = null, id = 0, lastWinDone = -1;
   const gap = cfg.gap || 3, tick = cfg.tick || 0.001;
 
@@ -70,7 +72,8 @@ export function simulateSB(bars, cfg) {
     // ablak
     const wi = WINDOWS.findIndex(([s, e]) => m >= s && m < e);
     if (wi >= 0 && (!win || win.key !== Math.floor(b.t / 86400000) * 10 + wi)) {
-      win = { key: Math.floor(b.t / 86400000) * 10 + wi, idx: wi, start: b.o, hi: b.h, lo: b.l, s: WINDOWS[wi][0], e: WINDOWS[wi][1], t: b.t, done: false };
+      win = { key: Math.floor(b.t / 86400000) * 10 + wi, idx: wi, start: b.o, hi: b.h, lo: b.l, s: WINDOWS[wi][0], e: WINDOWS[wi][1], t: b.t, done: false, log: [] };
+      logs.push(win);
       // (a futó kereskedés TP-je az új ablak FVG-jéhez igazodik, amint az kiderül)
     } else if (win && wi < 0) {
       win.tEnd = b.t; lastWin = win; win = null;          // a megbízás még egy óráig élhet
@@ -81,12 +84,16 @@ export function simulateSB(bars, cfg) {
     if (cur) {
       const d = cur.dir;
       let filled = false;
-      while (cur.filled < 4 && (d > 0 ? b.l <= cur.legs[cur.filled].p : b.h >= cur.legs[cur.filled].p)) { fill(cur, cur.filled, b); filled = true; }
+      while (cur.filled < 4 && (d > 0 ? b.l <= cur.legs[cur.filled].p : b.h >= cur.legs[cur.filled].p)) {
+        fill(cur, cur.filled, b); filled = true;
+        const w = logs.find(x => x.key === cur.wkey); if (w) w.log.push(`${cur.filled === 1 ? "belépő" : "DCA" + (cur.filled - 1)} teljesült ${+cur.legs[cur.filled - 1].p.toFixed(3)}`);
+      }
       if (filled && d * (cur.tp.p - cur.avg) <= 0) { cur.tp = tpFrom(d, cur.avg); cur.tpLog.push({ t: b.t, p: cur.tp.p, why: cur.tp.why }); }
       if (cur.state === "aktív" && cur.lastFill !== b.t && (d > 0 ? b.h >= cur.tp.p : b.l <= cur.tp.p)) {
         const px = cur.tp.p, q = cur.open, f = q * px * MAKER, pnl = d * (px - cur.avg) * q;
         cur.open = 0; cur.fees += f; cur.realized += pnl; cur.exits.push({ t: b.t, p: px, qty: q, why: "TP", pnl, fee: f });
         cur.state = "lezárva"; cur.closeT = b.t; cur.tpHit = [0];
+        { const w = logs.find(x => x.key === cur.wkey); if (w) w.log.push(`TP ${+px.toFixed(3)}: ${pnl >= 0 ? "+" : ""}${(pnl - f).toFixed(2)} $`); }
         events.push({ t: b.t, acc: "SB", pnl: pnl - f, trade: cur.id, why: `SB ${d > 0 ? "long" : "short"} TP` });
         lastWinDone = (win || lastWin || {}).key;                       // új belépő csak a következő ablakban
         cur = null;
@@ -94,16 +101,17 @@ export function simulateSB(bars, cfg) {
     }
 
     // az ablak első 5m FVG-je (a cél); ha ismert, a futó kereskedés TP-je is hozzá igazodik
-    if (win && !win.fvg && m < win.s + 30 && bars[i - 2].t >= win.t) {
+    if (win && !win.fvg && bars[i - 2].t >= win.t) {
       const b2 = bars[i - 2];
       if (b.l > b2.h) win.fvg = [b2.h, b.l]; else if (b.h < b2.l) win.fvg = [b.h, b2.l];
+      if (win.fvg) win.log.push(`FVG ${win.fvg.map(x => +x.toFixed(3)).join(" – ")}`);
       if (win.fvg && cur && cur.state === "aktív") {
         const x = cur.dir > 0 ? win.fvg[0] - 2 * tick : win.fvg[1] + 2 * tick;
         if (cur.dir * (x - cur.avg) > 0) { cur.tp = { p: x, why: "az ablak FVG-je (2 tickkel előtte)" }; cur.tpLog.push({ t: b.t, p: x, why: cur.tp.why }); }
       }
     }
-    // új belépő: az FVG ismertté válása után, az ablak végéig (+1 óra), ha nincs futó silver bullet
-    const act = win || (lastWin && b.t < lastWin.tEnd + 3600000 ? lastWin : null);
+    // új belépő: az FVG ismertté válása után, az ablak vége után legfeljebb 3 óráig, ha nincs futó silver bullet
+    const act = win || (lastWin && b.t < lastWin.tEnd + AFTER ? lastWin : null);
     if (act && act.fvg && !cur && !act.done && act.key !== lastWinDone) {
       const [fb, ft] = act.fvg, dir = b.c > ft ? -1 : b.c < fb ? 1 : 0;
       if (dir) {
@@ -118,20 +126,30 @@ export function simulateSB(bars, cfg) {
             fvg: act.fvg, atr: atr[i], fills: [], exits: [], fees: 0, realized: 0, closeT: null, lastFill: -1, tpHit: [], shares: [1], tpLog: [] };
           cur.tp = { p: dir > 0 ? fb - 2 * tick : ft + 2 * tick, why: "az ablak FVG-je (2 tickkel előtte)" };
           cur.tpLog.push({ t: b.t, p: cur.tp.p, why: cur.tp.why });
-          trades.push(cur); act.done = true; pending = cur;
-        }
+          trades.push(cur); act.done = true; pending = cur; cur.wkey = act.key;
+          act.log.push(`megbízás: ${dir > 0 ? "long" : "short"} limit ${+e.toFixed(3)} (${cands[0].why}) → cél az FVG ${+cur.tp.p.toFixed(3)}`);
+        } else if (!act.noLvl) { act.noLvl = true; act.log.push(`nincs erős szint az ár ${dir > 0 ? "alatt" : "fölött"} 2,5 ATR-en belül (${+b.c.toFixed(3)})`); }
       }
     }
     // a várakozó megbízás törlése, ha az ár előbb visszaért az FVG-hez, vagy lejárt az idő
     if (pending && pending.state === "vár") {
       const [fb, ft] = pending.fvg, back = pending.dir < 0 ? b.l <= ft : b.h >= fb;
-      const late = !win && (!lastWin || b.t >= lastWin.tEnd + 3600000);
-      if (back || late) { pending.state = "lejárt"; pending.closeT = b.t; if (cur === pending) cur = null; pending = null; }
+      const late = (win && win.key !== pending.wkey) || (!win && (!lastWin || b.t >= lastWin.tEnd + AFTER));
+      if (back || late) {
+        const w = logs.find(x => x.key === pending.wkey);
+        if (w) w.log.push(back ? "törölve: az ár előbb visszaért az FVG-hez" : "törölve: lejárt, nem teljesült");
+        pending.state = "lejárt"; pending.closeT = b.t; if (cur === pending) cur = null; pending = null;
+      }
     }
     if (cur) cur.tps = [cur.tp];
     if (pending && pending.state !== "vár") pending = null;
   }
   const last = bars[bars.length - 1];
   for (const t of trades) t.unreal = t.state === "aktív" ? t.dir * (last.c - t.avg) * t.open : 0;
-  return { trades, events, last };
+  for (const w of logs) {
+    if (!w.fvg) w.log.push("nem alakult ki FVG az ablakban");
+    else if (!w.done && !w.noLvl) w.log.push(cur && cur.wkey !== w.key && cur.state === "aktív" ? "fut egy korábbi silver bullet" : "az ár az FVG-ben maradt / nem távolodott el");
+  }
+  const windows = logs.map(w => ({ t: w.t, window: ["03–04", "10–11", "14–15"][w.idx], log: w.log }));
+  return { trades, events, last, windows };
 }

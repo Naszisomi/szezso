@@ -28,7 +28,8 @@ export function renderPaper(el, plans, key, rerender) {
   o.push(`<h2>Papírkereskedés – HYPE</h2><p class="muted">A rendszer szabályai szerint, automatikusan (a 15 perces gyertyákon végigjátszva). Kezdés: ${sim.days[0] ? fmtT.format(sim.days[0].T) : "–"}.</p>`);
   // a rács és a silver bullet külön: így a rácsos kereskedés statisztikája tiszta marad
   o.push(`<div class="ptabs"><button data-mode="all" class="${all ? "on" : ""}">Összesen (rács + SB)</button><button data-mode="grid" class="${mode === "grid" ? "on" : ""}">Rács (cross)</button><button data-mode="sb" class="${sb ? "on" : ""}">Silver bullet (SB számla)</button></div>`);
-  if (sb) o.push(`<p class="muted">A 7. („SB”) számlán, cross-ban. Ablakok (NY): 03–04, 10–11, 14–15 (Budapest: 09–10, 16–17, 20–21). Belépő a fals mozdulat végén, az 5m FVG-nél; 3 DCA; TP a kiindulópont felé eső Milana-szinten, ha nem jön össze, a következő ablakhoz igazodik.</p>`);
+  if (sb) o.push(`<p class="muted">A 7. („SB”) számlán, cross-ban. Ablakok (NY): 03–04, 10–11, 14–15 (Budapest: 09–10, 16–17, 20–21). Az ablak 5m FVG-je a cél (nem a belépő): miután kiderült, a belépő limit a túloldali legközelebbi erős szinten (vastag egyezésvonal / Milana-nyitóvonal), onnan vissza az FVG-hez; 3 DCA; ha nem jön össze, a TP a következő ablak FVG-jéhez igazodik.</p>`);
+  if (sb && sbs.windows && sbs.windows.length) o.push(`<details open><summary>Ablaknapló (miért nyílt / miért nem)</summary><ul>${sbs.windows.slice().reverse().map(w => `<li><b>${fmtT.format(w.t)} (${w.window})</b>: ${w.log.map(esc).join(" · ") || "–"}</li>`).join("")}</ul></details>`);
   else if (!all) o.push(`<div class="ptabs">${["Összes", ...ACC_NAMES].map(a => `<button data-acc="${a}" class="${a === acc ? "on" : ""}">${a}</button>`).join("")}</div>`);
   o.push(`<div class="cards">` + [
     ["Egyenleg", usd(start + realized, false)], ["Saját tőke (equity)", usd(start + realized + unreal, false)],
