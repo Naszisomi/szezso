@@ -2,30 +2,41 @@
 // kereskedései számlánként – pozíciók, megbízások, lezárt kereskedések, egyenlegtörténet, elemzés, egyenlegek.
 import { ACC_NAMES } from "./grid.js";
 import { getPref, setPref } from "./store.js";
-import { DEFAULT_BAL, ALL_ACC, SWAN } from "./plans.js";
+import { DEFAULT_BAL, ALL_ACC, SWAN, RULES } from "./plans.js";
+import { updateJournal, journalView, loadJournal } from "./journal.js";
 
 const fmtT = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const usd = (x, sign = true) => !isFinite(x) ? "–" : `${sign && x >= 0 ? "+" : ""}${x.toLocaleString("hu-HU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
 const cls = x => x >= 0 ? "up" : "dn";
 const OPEN = ["aktív", "részben", "védett"];
-let acc = "Összes", sub = "pos", mode = "all";
+let acc = "Összes", sub = "pos", mode = "all", view = "naplo";
 
 export function renderPaper(el, plans, key, rerender) {
   const sim = plans.sim(key), bal = plans.balances(), f = x => (+x).toFixed(3);
   if (!sim) { el.innerHTML = `<p class="muted">Adatok betöltése…</p>`; return; }
   const sb = mode === "sb", all = mode === "all", sbs = sim.sb || { trades: [], events: [] };
-  const src = sb ? sbs : all ? { trades: [...sim.trades, ...sbs.trades], events: [...sim.events, ...sbs.events].sort((a, b) => a.t - b.t) } : sim;
+  // élő napló (befagyasztott) vagy újraszámolt (a mostani szabályokkal az egész múlt)
+  const jv = journalView(updateJournal(sim, bal, RULES), sim), J = view === "naplo" && !!jv;
+  const gT = J ? jv.trades.filter(t => t.acc !== "SB") : sim.trades, sT = J ? jv.trades.filter(t => t.acc === "SB") : sbs.trades;
+  const gE = J ? jv.events.filter(e => e.acc !== "SB") : sim.events, sE = J ? jv.events.filter(e => e.acc === "SB") : sbs.events;
+  const B = J ? { ...bal, ...jv.startBal } : bal;
+  const src = sb ? { trades: sT, events: sE } : all ? { trades: [...gT, ...sT], events: [...gE, ...sE].sort((a, b) => a.t - b.t) } : { trades: gT, events: gE };
   const mine = t => sb || all || acc === "Összes" || t.acc === acc;
   const trades = src.trades.filter(mine), events = src.events.filter(e => sb || all || acc === "Összes" || e.acc === acc);
-  const start = sb ? bal.SB : all ? ALL_ACC.reduce((s, a) => s + bal[a], 0) : acc === "Összes" ? ACC_NAMES.reduce((s, a) => s + bal[a], 0) : bal[acc];
+  const ordTrades = (sb ? sbs.trades : all ? [...sim.trades, ...sbs.trades] : sim.trades).filter(mine);     // élő megbízások: mindig a mostani szabályokból
+  const start = sb ? B.SB : all ? ALL_ACC.reduce((s, a) => s + B[a], 0) : acc === "Összes" ? ACC_NAMES.reduce((s, a) => s + B[a], 0) : B[acc];
+  const haltOn = [sim.halts, sbs.halts].some(h => h && h.length && h[h.length - 1].on);
   const realized = events.reduce((s, e) => s + e.pnl, 0);
   const open = trades.filter(t => OPEN.includes(t.state) && t.open > 0), last = sim.last ? sim.last.c : NaN;
   const unreal = open.reduce((s, t) => s + t.dir * (last - t.avg) * t.open, 0);
   const margin = open.reduce((s, t) => s + t.avg * t.open / 10, 0);
   const o = [];
   o.push(`<p style="float:right"><button data-export="1">⇩ Export (elemzéshez)</button></p>`);
-  o.push(`<h2>Papírkereskedés – HYPE</h2><p class="muted">A rendszer szabályai szerint, automatikusan (a 15 perces gyertyákon végigjátszva). Kezdés: ${sim.days[0] ? fmtT.format(sim.days[0].T) : "–"}.</p>`);
+  o.push(`<h2>Papírkereskedés – HYPE</h2>`);
+  o.push(`<div class="ptabs"><button data-view="naplo" class="${J ? "on" : ""}">Élő napló</button><button data-view="ujra" class="${!J ? "on" : ""}">Újraszámolt (szabályteszt)</button></div>`);
+  o.push(`<p class="muted">Szabályverzió: v${RULES.v} (${RULES.date}). ${J ? `Napló indult: ${fmtT.format(jv.start)} – ami bekerült, nem számolódik újra.` : `A mostani szabályokkal újrajátszva ${sim.days[0] ? fmtT.format(sim.days[0].T) : "–"} óta (szebb, mint a valóság).`}</p>`);
+  if (haltOn) o.push(`<p style="background:#FFEBEE;color:#B71C1C;padding:6px 10px;border-radius:6px"><b>VÉSZFÉK:</b> a fiók saját tőkéje 20 %-nál többet esett – új belépő nincs, csak a meglévők kezelése.</p>`);
   // a rács és a silver bullet külön: így a rácsos kereskedés statisztikája tiszta marad
   o.push(`<div class="ptabs"><button data-mode="all" class="${all ? "on" : ""}">Összesen (rács + SB)</button><button data-mode="grid" class="${mode === "grid" ? "on" : ""}">Rács (cross)</button><button data-mode="sb" class="${sb ? "on" : ""}">Silver bullet (SB számla)</button></div>`);
   if (!sb && !all) o.push(`<div class="ptabs">${["Összes", ...ACC_NAMES].map(a => `<button data-acc="${a}" class="${a === acc ? "on" : ""}">${a}</button>`).join("")}</div>`);
@@ -41,11 +52,11 @@ export function renderPaper(el, plans, key, rerender) {
     o.push(table(["Számla", "Irány", "Menny.", "Átlagár", "Utolsó ár", "Nem real. PnL", "%", "Érték", "Margin", "Szerep", "SL+"], open.map(t => {
       const u = t.dir * (last - t.avg) * t.open;
       return [t.acc + (t.window ? " " + t.window : ""), side(t), t.open.toFixed(1), f(t.avg), f(last), `<span class="${cls(u)}">${usd(u)}</span>`, `${(u / (t.avg * t.open / 10) * 100).toFixed(2)}%`,
-        usd(t.avg * t.open, false), usd(t.avg * t.open / 10, false), t.acc === "SB" ? "TP " + f(t.tp.p) : roleTxt(t), t.stop != null ? f(t.stop) : "–"];
+        usd(t.avg * t.open, false), usd(t.avg * t.open / 10, false), t.acc === "SB" ? (t.tp ? "TP " + f(t.tp.p) : "–") : roleTxt(t), t.stop != null ? f(t.stop) : "–"];
     }), "Nincs nyitott pozíció."));
   } else if (sub === "ord") {
     const rows = [];
-    for (const t of trades) {
+    for (const t of ordTrades) {
       if (t.state === "vár" || (t.state === "aktív" && !t.exits.length)) t.legs.forEach((l, i) => { if (i >= t.filled) rows.push([t.acc, t.dir > 0 ? "Vétel" : "Eladás", "Limit", (l.units * t.unit).toFixed(1), f(l.p), i ? "DCA" + i : "entry", fmtT.format(t.from)]); });
       if (OPEN.includes(t.state) && t.tps) t.tps.forEach((x, i) => { if (t.shares[i] && !t.tpHit.includes(i)) rows.push([t.acc, t.dir > 0 ? "Eladás" : "Vétel", "Limit (TP)", (t.qty * t.shares[i]).toFixed(1), f(x.p), (i < 3 ? "TP" + (i + 1) : "swing") + " · " + esc(x.why), "–"]); });
       if (OPEN.includes(t.state) && t.stop != null) rows.push([t.acc, t.dir > 0 ? "Eladás" : "Vétel", "Stop", t.open.toFixed(1), f(t.stop), "pozitív stop", fmtT.format(t.stopT)]);
@@ -71,6 +82,15 @@ export function renderPaper(el, plans, key, rerender) {
       ["Összes nettó", usd(cum)], ["Legnagyobb visszaesés", usd(-dd)],
       ["Hozam a kezdőtőkére", `${(cum / start * 100).toFixed(2)}%`],
     ].map(([a, b]) => `<div class="card"><div class="muted">${a}</div><div class="v">${b}</div></div>`).join("") + `</div>`);
+    // szakaszonként: melyik hozza a pénzt, melyik csak a kockázatot
+    const secOf = t => t.acc !== "SB" ? "Rács" : (t.window || "SB").replace(/\s[\d:–]+$/, "");
+    const secs = [...new Set(done.map(secOf))];
+    const hrs = x => x >= 24 ? (x / 24).toFixed(1) + " nap" : x.toFixed(1) + " óra";
+    o.push(`<h3>Szakaszonként</h3>` + table(["Szakasz", "Db", "Nyerő %", "Átl. nyerő", "Átl. vesztő", "Profit factor", "Nettó", "Átl. idő bent"], secs.map(k => {
+      const ts = done.filter(t => secOf(t) === k), n = ts.map(t => t.realized - t.fees), w = n.filter(x => x > 0), l = n.filter(x => x <= 0);
+      const sw = w.reduce((a, x) => a + x, 0), sl = -l.reduce((a, x) => a + x, 0), tm = ts.reduce((a, t) => a + (t.closeT - t.fills[0].t), 0) / ts.length / 3600000;
+      return [k, ts.length, `${(w.length / ts.length * 100).toFixed(0)}%`, w.length ? usd(sw / w.length) : "–", l.length ? usd(-sl / l.length) : "–", sl > 0 ? (sw / sl).toFixed(2) : sw > 0 ? "∞" : "–", `<span class="${cls(sw - sl)}">${usd(sw - sl)}</span>`, hrs(tm)];
+    }), "Még nincs lezárt kereskedés."));
     o.push(`<h3>Kumulált PnL</h3>` + spark(pts, start));
   } else if (sub === "set") {
     o.push(`<p>Számlánkénti kezdőegyenleg (alapból ${DEFAULT_BAL.toLocaleString("hu-HU")} $, 7 számla, összesen 102 000 $; az SB a silver bullet számlája, mind cross). A méretezés ebből számol: ${SWAN} $-os esés (long, legfeljebb 0-ig) vagy emelkedés (short) se likvidálja a számlát, mind a 4 láb kitelve.</p>`);
@@ -81,6 +101,7 @@ export function renderPaper(el, plans, key, rerender) {
     o.push(`<p><button data-save="1">Mentés</button></p>`);
   }
   el.innerHTML = o.join("");
+  el.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { view = b.dataset.view; rerender(); });
   el.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => { mode = b.dataset.mode; rerender(); });
   el.querySelectorAll("[data-acc]").forEach(b => b.onclick = () => { acc = b.dataset.acc; rerender(); });
   el.querySelectorAll("[data-sub]").forEach(b => b.onclick = () => { sub = b.dataset.sub; rerender(); });
@@ -125,6 +146,8 @@ function exportAll(plans) {
       days: st.days,
       trades: s ? s.trades.map(t => { const { plan, ...rest } = t; return { ...rest, planDay: t.day, planDir: plan.dir }; }) : [],
       events: s ? s.events : [],
+      journal: loadJournal(key),
+      rules: RULES,
       silverBullet: s && s.sb ? { trades: s.sb.trades.map(({ L, ...t }) => t), events: s.sb.events, windows: s.sb.windows } : null,
       last: s && s.last,
       drawings: (() => { try { return JSON.parse(localStorage.getItem("szezso.draw." + key)) || []; } catch { return []; } })(),

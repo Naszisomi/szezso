@@ -167,7 +167,14 @@ export function simulate(days, bars, cfg, now) {
   let id = 0;
   const byDir = { 1: [], [-1]: [] };                  // nyitott (vár / aktív / részben / védett) kereskedések irányonként
   const isOpen = t => t.state === "aktív" || t.state === "részben" || t.state === "védett";
-  const touch = (b, d, x) => d > 0 ? b.l <= x : b.h >= x, reach = (b, d, x) => d > 0 ? b.h >= x : b.l <= x;
+  // limit csak akkor teljesül, ha az ár legalább 1 tickkel átüti (érintés nem elég); piaci zárásnál 2 tick csúszás
+  const tk = cfg.tick || 0, SLIP = 2 * tk;
+  const touch = (b, d, x) => d > 0 ? b.l <= x - tk : b.h >= x + tk, reach = (b, d, x) => d > 0 ? b.h >= x + tk : b.l <= x - tk;
+  // számlánkénti realizált eredmény (a méretezés az aktuális egyenlegből számol) és a vészfék
+  const accR = {}, curve = [], halts = [];
+  const START = ACC_NAMES.reduce((s, a) => s + (cfg.bal ? cfg.bal[a] || 0 : 0), 0) + (cfg.extStart || 0);
+  let halted = false;
+  const ev = e => { events.push(e); accR[e.acc] = (accR[e.acc] || 0) + e.pnl; };
 
   const fill = (t, k, b) => {
     const l = t.legs[k], first = t.exits.length && !t.remDca;
@@ -181,14 +188,15 @@ export function simulate(days, bars, cfg, now) {
     t.qty += q; t.open += q; t.cost += q * l.p; t.avg = t.cost / t.qty; t.filled = k + 1; t.lastFill = b.t;
     const fee = q * l.p * MAKER;
     t.fees += fee; t.fills.push({ t: b.t, p: l.p, qty: q, why: k ? "DCA" + k : "entry", fee });
-    events.push({ t: b.t, acc: t.acc, pnl: -fee, trade: t.id, why: (t.dir > 0 ? "long " : "short ") + (k ? "DCA" + k : "entry") + " díj" });
+    ev({ t: b.t, acc: t.acc, pnl: -fee, trade: t.id, why: (t.dir > 0 ? "long " : "short ") + (k ? "DCA" + k : "entry") + " díj" });
     if (t.state === "vár") t.state = "aktív";
   };
   const exit = (t, qty, px, time, why, fee) => {
+    if (fee === TAKER) px -= t.dir * SLIP;
     const q = Math.min(t.open, qty), f = q * px * fee, pnl = t.dir * (px - t.avg) * q;
     t.open -= q; t.fees += f; t.realized += pnl;
     t.exits.push({ t: time, p: px, qty: q, why, pnl, fee: f });
-    events.push({ t: time, acc: t.acc, pnl: pnl - f, trade: t.id, why: (t.dir > 0 ? "long " : "short ") + why });
+    ev({ t: time, acc: t.acc, pnl: pnl - f, trade: t.id, why: (t.dir > 0 ? "long " : "short ") + why });
     if (t.open <= 1e-9) { t.open = 0; t.state = "lezárva"; t.closeT = time; }
   };
 
@@ -215,6 +223,7 @@ export function simulate(days, bars, cfg, now) {
 
   // új megbízások a nap tervéből a szabad számlákra
   const place = (p, T, dayT, revised, beyond = null) => {
+    if (halted) return;
     const d = p.dir, gap = p.gap || 3, open = byDir[d].filter(isOpen);
     const busy = new Set(byDir[d].map(t => t.acc));
     const free = ACC_NAMES.filter(a => !busy.has(a));
@@ -226,7 +235,7 @@ export function simulate(days, bars, cfg, now) {
       const legs = [pos.entry, ...pos.dca].map((l, i) => ({ p: l.p, why: l.why, units: UNITS[i] }));
       let unit = 1;
       if (cfg.sized) {
-        const acc = free[0], eq = (cfg.bal[acc] || 17000);
+        const acc = free[0], eq = (cfg.bal[acc] || 17000) + (accR[acc] || 0);
         unit = unitFor(eq, d, legs, cfg.swan || 70);
       }
       const t = { id: ++id, dir: d, acc: free.shift(), day: dayT, from: T, plan: p, legs, unit, filled: 0, qty: 0, cost: 0, avg: null, open: 0,
@@ -304,6 +313,7 @@ export function simulate(days, bars, cfg, now) {
         if (t.state !== "vár" && t.state !== "aktív" && t.state !== "részben") continue;
         if (t.stop != null) continue;                    // pozitív stoppal védett kereskedés nem DCA-z
         // szűrő: új belépő nem teljesül, amíg friss volumendivergencia tiltja (RSI/KDJ felülírja) – a DCA-kat nem érinti
+        if (t.state === "vár" && halted) continue;          // vészfék: új belépő nem teljesül
         if (t.state === "vár" && cfg.filter && touch(b, d, t.legs[0].p)) {
           const lines = ["m15", "h1", "h4"].flatMap(k => (t.plan.cand && t.plan.cand[k] && t.plan.cand[k].cf) || []).filter(g => g.n >= 5);
           const f = cfg.filter.check(b.t, d, lines);
@@ -350,8 +360,14 @@ export function simulate(days, bars, cfg, now) {
       if (re) rank(d);
     }
     lastPrice = b.c;
+    // a fiók saját tőkéje a gyertya végén (a másik szimuláció – SB – becsült görbéjével együtt); 20 % esés → vészfék
+    let eq = 0; for (const a in accR) eq += accR[a];
+    for (const d of [1, -1]) for (const t of byDir[d]) if (isOpen(t)) eq += t.dir * (b.c - t.avg) * t.open;
+    curve.push([b.t, eq]);
+    const tot = START + eq + (cfg.extEq ? cfg.extEq(b.t) : 0), h = START > 0 && tot < START * (1 - (cfg.halt ?? 0.2));
+    if (h !== halted) { halted = h; halts.push({ t: b.t, on: h, eq: tot }); }
   }
   const last = bars.length ? bars[bars.length - 1] : null;
   for (const t of trades) t.unreal = isOpen(t) && last ? t.dir * (last.c - t.avg) * t.open : 0;
-  return { trades, events, last };
+  return { trades, events, last, curve, halts };
 }

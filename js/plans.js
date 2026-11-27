@@ -21,6 +21,10 @@ const fmtDay = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", m
 export const SWAN = 50;
 export const DEFAULT_BAL = Math.round(102000 / 7 * 100) / 100;   // 7 számla: Fő, Al1–Al5 (rács) és SB (silver bullet), mind cross
 export const ALL_ACC = [...ACC_NAMES, "SB"];
+// szabályverzió: minden szabályváltozásnál nő; az élő napló eseményei ezt is rögzítik
+export const RULES = { v: 1, date: "2026-11-27", note: "napló-indító: rács + SB (London/TNY/NY AM/NY PM), szűrők, C2, vészfék 20 %, tick-átütés, csúszás" };
+// görbe [[t, érték]] → függvény: az utolsó t-ig ismert érték
+function curveAt(c) { return t => { let lo = 0, hi = c.length - 1, r = 0; while (lo <= hi) { const m = (lo + hi) >> 1; if (c[m][0] <= t) { r = c[m][1]; lo = m + 1; } else hi = m - 1; } return r; }; }
 
 export function asiaClose(ms, back = 0) {           // a NY-nap kezdete (= az Ázsia-killzone vége), back nappal korábban
   const d = nyDate(ms), u = new Date(Date.UTC(d.y, d.m - 1, d.d - back));
@@ -226,11 +230,16 @@ export class PlanManager {
     // belépési szűrő (volumendivergencia 5m/15m + RSI/KDJ): a rácsra és a silver bulletre is
     const b5 = d.bars5 ? d.bars5.filter(b => b.t >= (days[0] ? days[0].T - 86400000 : 0)) : null;
     const filter = makeFilter(b5, b5 ? to15(b5) : d.bars15);
-    const sim = simulate(days, bars, { filter, bal: this.balances(), remMode: getPref("paper.remMode", "a"), swan: SWAN, six: hype ? 6 : null, sized: hype, minTp2: (avg, p) => hype ? 2 : Math.max(2 * ((p && p.atr) || avg * 0.004), avg * 0.004) }, Date.now());
-    sim.days = days; sim.key = key; sim.hype = hype;
-    if (hype && d.bars5 && days[0]) sim.sb = simulateSB(d.bars5.filter(b => b.t >= days[0].T), { filter, tick: this.insts[key].tick, sized: true, bal: this.balances()["SB"], swan: SWAN,
+    const bal = this.balances(), tick = this.insts[key].tick;
+    const gridCfg = { filter, tick, bal, remMode: getPref("paper.remMode", "a"), swan: SWAN, six: hype ? 6 : null, sized: hype, minTp2: (avg, p) => hype ? 2 : Math.max(2 * ((p && p.atr) || avg * 0.004), avg * 0.004) };
+    const sbRun = hype && d.bars5 && days[0] ? extEq => simulateSB(d.bars5.filter(b => b.t >= days[0].T), { filter, tick, sized: true, bal: bal.SB, swan: SWAN, extStart: ACC_NAMES.reduce((s, a) => s + bal[a], 0), extEq,
       // vastag egyezésvonalak a silver bullet belépőjéhez: az adott nap tervéből (15m, 1h, 4h)
-      cfLines: t => { const day = days.filter(x => x.T <= t).pop() || days[0]; return ["long", "short"].flatMap(k => day[k] && day[k].cand ? ["m15", "h1", "h4"].flatMap(f => (day[k].cand[f] && day[k].cand[f].cf) || []) : []).filter(g => g.n >= 5); } });
+      cfLines: t => { const day = days.filter(x => x.T <= t).pop() || days[0]; return ["long", "short"].flatMap(k => day[k] && day[k].cand ? ["m15", "h1", "h4"].flatMap(f => (day[k].cand[f] && day[k].cand[f].cf) || []) : []).filter(g => g.n >= 5); } }) : null;
+    // vészfék a teljes fiókra (rács + SB): az SB előzetes görbéje a rácsnak, a rács görbéje az SB-nek
+    const sb0 = sbRun ? sbRun(null) : null;
+    const sim = simulate(days, bars, { ...gridCfg, extStart: hype ? bal.SB : 0, extEq: sb0 ? curveAt(sb0.curve) : null }, Date.now());
+    sim.days = days; sim.key = key; sim.hype = hype; sim.rules = RULES;
+    if (sbRun) sim.sb = sbRun(curveAt(sim.curve));
     this.sims.set(key, sim);
     return sim;
   }

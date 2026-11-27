@@ -33,7 +33,9 @@ const WNAME = ["London 09–10", "TNY 14:30–15:30", "NY AM 16–17", "NY PM 20
 const OPENS = [["TWO", 18 * 60, true], ["TDO", 0], ["TAO", 20 * 60 + 30], ["TLO", 2 * 60 + 30], ["TNY", 8 * 60 + 30], ["NYAM", 9 * 60 + 30], ["TPM", 14 * 60 + 30]];
 
 export function simulateSB(bars, cfg) {
-  const trades = [], events = [], logs = [];
+  const trades = [], events = [], logs = [], curve = [], halts = [];
+  const START = (cfg.bal || 14571) + (cfg.extStart || 0);
+  let real = 0, halted = false;
   if (bars.length < 50) return { trades, events, windows: [] };
   const offs = new Map(), nyMin = t => {
     const h = Math.floor(t / 3600000);
@@ -47,7 +49,7 @@ export function simulateSB(bars, cfg) {
     const b = bars[i], p = bars[i - 1] || b, tr = Math.max(b.h - b.l, Math.abs(b.h - p.c), Math.abs(b.l - p.c));
     a = i < 14 ? (a * i + tr) / (i + 1) : (a * 13 + tr) / 14; atr.push(a * 1.73);
   }
-  const tick = cfg.tick || 0.001, f3 = x => +x.toFixed(3);
+  const tick = cfg.tick || 0.001, tk = cfg.tick || 0, f3 = x => +x.toFixed(3);
   const lv = {}, m15 = []; let c15 = null;
   // volumendivergenciák 5m-en és 15m-en, a megerősítésük (a swing után 5 gyertya) idejével
   const flt = cfg.filter || makeFilter(bars, to15(bars));
@@ -60,7 +62,7 @@ export function simulateSB(bars, cfg) {
     const l = t.legs[k], q = l.units * t.unit, fee = q * l.p * MAKER;
     t.qty += q; t.open += q; t.cost += q * l.p; t.avg = t.cost / t.qty; t.filled = k + 1; t.lastFill = b.t; t.fees += fee;
     t.fills.push({ t: b.t, p: l.p, qty: q, why: k ? "DCA" + k : "entry", fee });
-    events.push({ t: b.t, acc: "SB", pnl: -fee, trade: t.id, why: `SB ${side(t.dir)} ${k ? "DCA" + k : "entry"} díj` });
+    real += -fee; events.push({ t: b.t, acc: "SB", pnl: -fee, trade: t.id, why: `SB ${side(t.dir)} ${k ? "DCA" + k : "entry"} díj` });
     if (t.state === "vár") t.state = "aktív";
     wlog(t, `${side(t.dir)} ${k ? "DCA" + k : "belépő"} teljesült ${f3(l.p)}`);
   };
@@ -89,6 +91,11 @@ export function simulateSB(bars, cfg) {
 
   for (let i = 2; i < bars.length; i++) {
     const b = bars[i], { m, wd } = nyMin(b.t);
+    // a fiók saját tőkéje az előző gyertya végén (a rács becsült görbéjével együtt); 20 % esés → vészfék
+    { const pc = bars[i - 1].c; let eq = real; for (const t of live()) if (t.state === "aktív") eq += t.dir * (pc - t.avg) * t.open;
+      curve.push([bars[i - 1].t, eq]);
+      const tot = START + eq + (cfg.extEq ? cfg.extEq(bars[i - 1].t) : 0), h = tot < START * (1 - (cfg.halt ?? 0.2));
+      if (h !== halted) { halted = h; halts.push({ t: b.t, on: h, eq: tot }); } }
     for (const [k, mm, monday] of OPENS) if (m === mm && (!monday || wd === 0)) lv[k] = { open: b.o, t: b.t, i15: m15.length + (c15 && c15.t !== Math.floor(b.t / 900000) * 900000 ? 1 : 0), fvg: null };
     // 15m gyertyák az 5m-ből; a nyitások első 15m FVG-je (a Milana szerint: a nyitógyertyával kezdődő is számít)
     const t15 = Math.floor(b.t / 900000) * 900000;
@@ -126,26 +133,27 @@ export function simulateSB(bars, cfg) {
     for (const t of live()) {
       const d = t.dir;
       // a belépő nem teljesül, amíg a szűrő tiltja (volumendivergencia, RSI/KDJ nélkül)
-      if (t.state === "vár" && (d > 0 ? b.l <= t.legs[0].p : b.h >= t.legs[0].p)) {
+      if (t.state === "vár" && halted) continue;                       // vészfék: új belépő nem teljesül
+      if (t.state === "vár" && (d > 0 ? b.l <= t.legs[0].p - tk : b.h >= t.legs[0].p + tk)) {
         const f = flt.check(b.t, d, lines);
         if (f) { if (!t.fLog) { t.fLog = true; wlog(t, `${side(d)} belépő kivárva: ${f.why}`); } continue; }
       }
       if (t.state === "vár" && t.L) { const x = tpFor(d, t.target, t.L); if (x.p !== t.tp.p) { setTp(t, x.p, x.why, b); wlog(t, `${side(d)} TP frissítve → ${f3(x.p)} (${x.why})`); } }
       let filled = false;
-      while (t.filled < 4 && (d > 0 ? b.l <= t.legs[t.filled].p : b.h >= t.legs[t.filled].p)) { fill(t, t.filled, b); filled = true; }
+      while (t.filled < 4 && (d > 0 ? b.l <= t.legs[t.filled].p - tk : b.h >= t.legs[t.filled].p + tk)) { fill(t, t.filled, b); filled = true; }
       if (t.state !== "aktív") continue;
       if (filled && t.filled >= 2) { setTp(t, t.avg + d * BE, `DCA után: átlagár + ${BE} $`, b); wlog(t, `${side(d)} DCA után a TP → ${f3(t.tp.p)} (átlagár ${f3(t.avg)} + ${BE} $)`); }
-      if (t.lastFill !== b.t && d * (t.tp.p - t.avg) > 0 && (d > 0 ? b.h >= t.tp.p : b.l <= t.tp.p)) {
+      if (t.lastFill !== b.t && d * (t.tp.p - t.avg) > 0 && (d > 0 ? b.h >= t.tp.p + tk : b.l <= t.tp.p - tk)) {
         const px = t.tp.p, q = t.open, fee = q * px * MAKER, pnl = d * (px - t.avg) * q;
         t.open = 0; t.fees += fee; t.realized += pnl; t.exits.push({ t: b.t, p: px, qty: q, why: "TP", pnl, fee });
         t.state = "lezárva"; t.closeT = b.t; t.tpHit = [0];
         wlog(t, `${side(d)} TP ${f3(px)}: ${pnl - fee >= 0 ? "+" : ""}${(pnl - fee).toFixed(2)} $`);
-        events.push({ t: b.t, acc: "SB", pnl: pnl - fee, trade: t.id, why: `SB ${side(d)} TP` });
+        real += pnl - fee; events.push({ t: b.t, acc: "SB", pnl: pnl - fee, trade: t.id, why: `SB ${side(d)} TP` });
       }
     }
 
     // megbízások: az FVG után mindkét irányba, a cél (az ablak nyitóvonala) két oldalán
-    const act = asia ? null : win || lastWin;      // az ablak után is keres, amíg a következő ablak el nem indul
+    const act = asia || halted ? null : win || lastWin;      // az ablak után is keres, amíg a következő ablak el nem indul
     if (!act || !act.fvg || (act.placed[1] && act.placed[-1])) continue;
     const L = lv[TARGET[act.idx]];
     if (!L || L.t < act.t - 12 * 3600000 || !L.fvg) { if (!act.noTgt) { act.noTgt = true; act.log.push(`a cél (${TARGET[act.idx]} FVG) még nem ismert – várakozik`); } continue; }
@@ -177,7 +185,7 @@ export function simulateSB(bars, cfg) {
         const prev = legs[k - 1].p, g = beyond.find(x => -dir * (x.p - prev) >= 0.5 * atr[i]);
         legs.push(g ? { p: g.p, why: `DCA${k} (EGYEZÉS ${g.n})`, units: UNITS[k] } : { p: prev - dir * atr[i], why: `DCA${k} (1 ATR)`, units: UNITS[k] });
       }
-      const unit = cfg.sized ? unitFor(cfg.bal || 14571, dir, legs, cfg.swan || 70) : 1;
+      const unit = cfg.sized ? unitFor((cfg.bal || 14571) + real, dir, legs, cfg.swan || 70) : 1;
       const t = { id: ++id, acc: "SB", dir, legs, unit, filled: 0, qty: 0, cost: 0, avg: null, open: 0, state: "vár", from: b.t, day: act.t, window: WNAME[act.idx],
         wkey: act.key, fvg: act.fvg, target: TARGET[act.idx], L, atr: atr[i], fills: [], exits: [], fees: 0, realized: 0, closeT: null, lastFill: -1, tpHit: [], shares: [1], tpLog: [] };
       setTp(t, tpP, why, b);
@@ -190,5 +198,5 @@ export function simulateSB(bars, cfg) {
   for (const t of trades) t.unreal = t.state === "aktív" ? t.dir * (last.c - t.avg) * t.open : 0;
   for (const w of logs) if (!w.fvg) w.log.push("nem alakult ki FVG az ablakban");
   const windows = logs.map(w => ({ t: w.t, window: WNAME[w.idx], log: w.log }));
-  return { trades, events, last, windows };
+  return { trades, events, last, windows, curve, halts };
 }
