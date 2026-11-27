@@ -228,10 +228,49 @@ export function simulate(days, bars, cfg, now) {
   };
 
   // új megbízások a nap tervéből a szabad számlákra
+  // Számlánként és irányonként 2 kereskedés lehet: egy cross (1. kör: Fő → Al1 → … → Al5) és egy izo (2. kör: ha az Al5
+  // cross-a beindult, a létra folytatódik – Fő izo az Al5 belépője utáni szinten, majd Al1 … Al5 izo), mind 3 DCA-val.
+  const curPlan = { 1: null, [-1]: null };
+  const mkTrade = (p, T, dayT, revised, acc, legs, kind, eq) => {
+    const d = p.dir, unit = cfg.sized ? unitFor(eq, d, legs, cfg.swan || 70) : 1;
+    const t = { id: ++id, dir: d, acc, day: dayT, from: T, plan: p, legs, unit, filled: 0, qty: 0, cost: 0, avg: null, open: 0,
+      state: "vár", role: null, tps: null, shares: SHARES.split, tpHit: [], stop: null, stopT: null, lock: false, lastFill: -1,
+      fills: [], exits: [], fees: 0, realized: 0, closeT: null, revised: !!revised, kind };
+    if (kind === "izo") {
+      // izolált margin: a 10× kezdő margin, de legalább a 20 $-os mozgás vesztesége a belépőtől, mind a 4 láb kitelve
+      const worst = legs[0].p - d * 20, notional = legs.reduce((a, l) => a + l.units * l.p, 0) * unit;
+      t.iso = true; t.window = "izo"; t.margin = Math.max(notional / 10, legs.reduce((a, l) => a + l.units * unit * d * (l.p - worst), 0)) * 1.05;
+    }
+    trades.push(t); byDir[d].push(t);
+    return t;
+  };
+  const placeIzo = (d, T) => {
+    const p = curPlan[d];
+    if (halted || !p) return;
+    const al5 = byDir[d].find(t => t.kind !== "izo" && t.acc === ACC_NAMES[ACC_NAMES.length - 1] && isOpen(t));
+    if (!al5) return;
+    const busy = new Set(byDir[d].filter(t => t.kind === "izo").map(t => t.acc)), gap = p.gap || 3;
+    const free = ACC_NAMES.filter(a => !busy.has(a));
+    if (!free.length) return;
+    // a létra folytatása: az Al5 belépője utáni szint (az Al5 DCA1-e), onnan mindig az előző DCA1-e
+    const ladder = positions({ ...p, entry: { p: al5.legs[1].p, why: "izo: az Al5 belépője utáni szint" } }, ACC_NAMES.length);
+    const taken = byDir[d].filter(t => t.kind === "izo").map(t => t.legs[0].p);
+    ladder.forEach((pos, k) => {
+      const acc = ACC_NAMES[k];
+      if (busy.has(acc) || taken.some(x => Math.abs(x - pos.entry.p) < gap / 2)) return;
+      const legs = [pos.entry, ...pos.dca].map((l, i) => ({ p: l.p, why: l.why, units: UNITS[i] }));
+      const t = mkTrade(p, T, p.T || al5.day, false, acc, legs, "izo", (cfg.bal[acc] || 17000) + (accR[acc] || 0));
+      // a mérete ugyanakkora, mint a számla cross kereskedéséé (ha van)
+      const cr = byDir[d].find(x => x.kind !== "izo" && x.acc === acc) || al5;
+      if (cfg.sized && cr) { t.unit = cr.unit; const worst = legs[0].p - d * 20; t.margin = Math.max(legs.reduce((a, l) => a + l.units * l.p, 0) * t.unit / 10, legs.reduce((a, l) => a + l.units * t.unit * d * (l.p - worst), 0)) * 1.05; }
+    });
+    rank(d);
+  };
   const place = (p, T, dayT, revised, beyond = null) => {
     if (halted) return;
-    const d = p.dir, gap = p.gap || 3, open = byDir[d].filter(isOpen);
-    const busy = new Set(byDir[d].map(t => t.acc));
+    const d = p.dir, gap = p.gap || 3, open = byDir[d].filter(t => isOpen(t) && t.kind !== "izo");
+    curPlan[d] = { ...p, T: dayT };
+    const busy = new Set(byDir[d].filter(t => t.kind !== "izo").map(t => t.acc));
     const free = ACC_NAMES.filter(a => !busy.has(a));
     const occupied = x => open.some(t => Math.abs(t.legs[0].p - x) < gap);
     for (const pos of positions(p)) {
@@ -239,17 +278,11 @@ export function simulate(days, bars, cfg, now) {
       if (occupied(pos.entry.p)) continue;
       if (beyond != null && d * (beyond - pos.entry.p) < gap) continue;          // 6 $-os szabály: csak a futó láncszemen túl
       const legs = [pos.entry, ...pos.dca].map((l, i) => ({ p: l.p, why: l.why, units: UNITS[i] }));
-      let unit = 1;
-      if (cfg.sized) {
-        const acc = free[0], eq = (cfg.bal[acc] || 17000) + (accR[acc] || 0);
-        unit = unitFor(eq, d, legs, cfg.swan || 70);
-      }
-      const t = { id: ++id, dir: d, acc: free.shift(), day: dayT, from: T, plan: p, legs, unit, filled: 0, qty: 0, cost: 0, avg: null, open: 0,
-        state: "vár", role: null, tps: null, shares: SHARES.split, tpHit: [], stop: null, stopT: null, lock: false, lastFill: -1,
-        fills: [], exits: [], fees: 0, realized: 0, closeT: null, revised: !!revised };
-      trades.push(t); byDir[d].push(t);
+      const acc = free.shift();
+      mkTrade(p, T, dayT, revised, acc, legs, "cross", (cfg.bal[acc] || 17000) + (accR[acc] || 0));
     }
     rank(d);
+    placeIzo(d, T);
   };
 
   // napváltás: a megbízások törlése, a nyitott kereskedések kezelése
@@ -331,6 +364,7 @@ export function simulate(days, bars, cfg, now) {
         }
         while (t.filled < 4 && touch(b, d, t.legs[t.filled].p)) { fill(t, t.filled, b); ch = true; }
       }
+      if (ch && byDir[d].some(t => t.kind !== "izo" && t.acc === ACC_NAMES[ACC_NAMES.length - 1] && t.lastFill === b.t && t.filled === 1)) placeIzo(d, b.t);   // az Al5 cross beindult → izo kör
       if (ch) {
         for (const t of byDir[d]) if (t.lastFill === b.t && t.exits.length && t.stop == null) {   // maradék + DCA: új átlagár, új TP-k
           t.tps = tpSet(t.plan, t.avg, null, cfg.minTp2(t.avg, t.plan)); t.tpHit = []; t.shares = SHARES[t.role === "full" ? "full" : t.role || "split"];

@@ -92,7 +92,7 @@ export function renderPaper(el, plans, key, rerender) {
       ["Hozam a kezdőtőkére", `${(cum / start * 100).toFixed(2)}%`],
     ].map(([a, b]) => `<div class="card"><div class="muted">${a}</div><div class="v">${b}</div></div>`).join("") + `</div>`);
     // szakaszonként: melyik hozza a pénzt, melyik csak a kockázatot
-    const secOf = t => t.acc !== "SB" ? "Rács" : (t.window || "SB").replace(/\s[\d:–]+$/, "");
+    const secOf = t => t.acc !== "SB" ? (t.window === "izo" ? "Rács izo" : "Rács") : (t.window || "SB").replace(/\s[\d:–]+$/, "");
     const secs = [...new Set(done.map(secOf))];
     const hrs = x => x >= 24 ? (x / 24).toFixed(1) + " nap" : x.toFixed(1) + " óra";
     o.push(`<h3>Szakaszonként</h3>` + table(["Szakasz", "Db", "Nyerő %", "Átl. nyerő", "Átl. vesztő", "Profit factor", "Nettó", "Átl. idő bent"], secs.map(k => {

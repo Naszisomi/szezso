@@ -22,8 +22,9 @@ export const SWAN = 50;
 export const DEFAULT_BAL = Math.round(102000 / 7 * 100) / 100;   // 7 számla: Fő, Al1–Al5 (rács) és SB (silver bullet), mind cross
 export const ALL_ACC = [...ACC_NAMES, "SB"];
 // szabályverzió: minden szabályváltozásnál nő; az élő napló eseményei ezt is rögzítik
-export const RULES = { v: 1.2, date: "2026-11-27", note: "napló-indító: rács + SB (London/TNY/NY AM/NY PM), szűrők, C2, vészfék 20 %, tick-átütés, csúszás; javítás: TP1 a legközelebbi vastag egyezésvonalon (mai terv), pozitív SL 1 $ nyereségtől (nem swing)", reset: 3,
-  changes: [{ v: 1.2, date: "2026-11-27", note: "új: extrém visszafordulás izolált kereskedés az SB számlán (RSI 15m+1h 20/80, J 15m; GP 9–10/10; 2 DCA; margin ≤ 10 %, +20 $ védelem; zárás vastag vonal vagy RSI/KDJ)" }] };
+export const RULES = { v: 1.3, date: "2026-11-27", note: "napló-indító: rács + SB (London/TNY/NY AM/NY PM), szűrők, C2, vészfék 20 %, tick-átütés, csúszás; javítás: TP1 a legközelebbi vastag egyezésvonalon (mai terv), pozitív SL 1 $ nyereségtől (nem swing)", reset: 3,
+  changes: [{ v: 1.2, date: "2026-11-27", note: "új: extrém visszafordulás izolált kereskedés az SB számlán (RSI 15m+1h 20/80, J 15m; GP 9–10/10; 2 DCA; margin ≤ 10 %, +20 $ védelem; zárás vastag vonal vagy RSI/KDJ)" },
+    { v: 1.3, date: "2026-11-27", note: "rács: számlánként és irányonként 2 kereskedés – cross (Fő→Al5) és izo (ha az Al5 cross beindult: Fő→Al5 izo a létra folytatásán), mind 3 DCA, az izo a cross méretével, izolált margin +20 $ védelemmel; vészfék 20 % marad" }] };
 // görbe [[t, érték]] → függvény: az utolsó t-ig ismert érték
 function curveAt(c) { return t => { let lo = 0, hi = c.length - 1, r = 0; while (lo <= hi) { const m = (lo + hi) >> 1; if (c[m][0] <= t) { r = c[m][1]; lo = m + 1; } else hi = m - 1; } return r; }; }
 
