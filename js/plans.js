@@ -19,12 +19,17 @@ const COL = { long: "#089981", short: "#F23645", done: "#9E9E9E", old: "#8D6E63"
 const fmtDay = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "short", day: "numeric" });
 // méretezés: ekkora esés (long, legfeljebb 0-ig) / emelkedés (short) se likvidálja a számlát, mind a 4 láb kitelve
 export const SWAN = 50;
-export const DEFAULT_BAL = Math.round(102000 / 7 * 100) / 100;   // 7 számla: Fő, Al1–Al5 (rács) és SB (silver bullet), mind cross
+export const DEFAULT_BAL = 102000 / 6;   // 6 OKX-számla: Fő, Al1–Al4 (rács) és Al5 = SB (silver bullet + extrém izo) – 17 000 $ mindegyik
 export const ALL_ACC = [...ACC_NAMES, "SB"];
 // szabályverzió: minden szabályváltozásnál nő; az élő napló eseményei ezt is rögzítik
-export const RULES = { v: 1.3, date: "2026-11-27", note: "napló-indító: rács + SB (London/TNY/NY AM/NY PM), szűrők, C2, vészfék 20 %, tick-átütés, csúszás; javítás: TP1 a legközelebbi vastag egyezésvonalon (mai terv), pozitív SL 1 $ nyereségtől (nem swing)", reset: 3,
-  changes: [{ v: 1.2, date: "2026-11-27", note: "új: extrém visszafordulás izolált kereskedés az SB számlán (RSI 15m+1h 20/80, J 15m; GP 9–10/10; 2 DCA; margin ≤ 10 %, +20 $ védelem; zárás vastag vonal vagy RSI/KDJ)" },
-    { v: 1.3, date: "2026-11-27", note: "rács: számlánként és irányonként 2 kereskedés – cross (Fő→Al5) és izo (ha az Al5 cross beindult: Fő→Al5 izo a létra folytatásán), mind 3 DCA, az izo a cross méretével, izolált margin +20 $ védelemmel; vészfék 20 % marad" }] };
+export const RULES = { v: 2, date: "2026-11-27", reset: 4,
+  note: "végleges felosztás: 6 OKX-számla, 17 000 $ mindegyik – Fő, Al1–Al4 rács (cross + izo kör, 3 DCA), Al5 = SB (silver bullet + extrém izo); a napló ezzel újraszámolva",
+  changes: [
+    { v: 1, note: "napló-indító: rács + SB (London/TNY/NY AM/NY PM), szűrők, C2, vészfék 20 %, tick-átütés, csúszás" },
+    { v: 1.1, note: "javítás: TP1 a legközelebbi vastag egyezésvonalon (mai terv), pozitív SL 1 $ nyereségtől (nem swing)" },
+    { v: 1.2, note: "extrém visszafordulás izolált kereskedés az SB számlán (RSI 15m+1h 20/80, J 15m; GP 9–10/10; 2 DCA; margin ≤ 10 %, +20 $ védelem)" },
+    { v: 1.3, note: "rács: számlánként és irányonként cross + izo; az izo kör az utolsó cross indulása után, a cross méretével" },
+    { v: 2, note: "6 számla (5 rács + SB), 17 000 $ / számla" }] };
 // görbe [[t, érték]] → függvény: az utolsó t-ig ismert érték
 function curveAt(c) { return t => { let lo = 0, hi = c.length - 1, r = 0; while (lo <= hi) { const m = (lo + hi) >> 1; if (c[m][0] <= t) { r = c[m][1]; lo = m + 1; } else hi = m - 1; } return r; }; }
 
@@ -217,7 +222,7 @@ export class PlanManager {
   setRsiTf(tf) { this.rsiTf = tf; this.tickAll(); }
 
   // papírszámlák egyenlege (a tableten, számlánként szerkeszthető)
-  balances() { const b = getPref("paper.bal", {}); return Object.fromEntries(ALL_ACC.map(a => [a, +b[a] || DEFAULT_BAL])); }
+  balances() { const b = getPref("paper.bal6", {}); return Object.fromEntries(ALL_ACC.map(a => [a, +b[a] || DEFAULT_BAL])); }
 
   // a folyamatos rács végigjátszása a 15m gyertyákon (csak HYPE-pal kereskedünk: a többinél méretezés nélkül)
   runSim(key) {

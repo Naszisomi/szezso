@@ -1,5 +1,5 @@
 // szezso – alap chart: élő gyertyák, idősík-váltó, magyar idő, fülek.
-// Fülek: 6 HYPE számlafül (Fő, Al1–Al5), BTC, BNB, „6×HYPE” (mind a 6 számla egyszerre),
+// Fülek: 6 HYPE számlafül (Fő, Al1–Al4 rács, SB = 5. alszámla), BTC, BNB, „6×HYPE” (mind a 6 számla egyszerre),
 // „HYPE·BTC·BNB” (a három termék egyszerre), adatfülek és a papírkereskedés. Kereskedés csak HYPE-pal,
 // a BTC és a BNB csak számolva, tájékoztatásként.
 import { BARS, fetchLatest, fetchOlder, LiveFeed, findInstId, instAlive } from "./okx.js";
@@ -24,7 +24,7 @@ export const INSTRUMENTS = {
   BTC:  { instId: "BTC-USD_UM_XPERP-310404",  name: "BTCUSD UM X-Perp (2031 ápr.)",  short: "BTC",  tick: 0.1 },
   BNB:  { instId: "BNB-USD_UM_XPERP-310523",  name: "BNBUSD UM X-Perp (2031 máj.)",  short: "BNB",  tick: 0.1, find: /^BNB-USD_UM_XPERP-3105/ },
 };
-const ACCOUNTS = ["Fő", "Al1", "Al2", "Al3", "Al4", "Al5", "SB"];   // SB: silver bullet (7. számla)
+const ACCOUNTS = ["Fő", "Al1", "Al2", "Al3", "Al4", "SB"];   // OKX: főszámla + 4 alszámla a rács, az 5. alszámla (SB) a silver bullet + extrém izo
 // fül -> elrendezés: [termék, számla] cellák
 const TABS = [
   ...ACCOUNTS.map(a => ({ id: a, label: a, layout: "single", cells: [["HYPE", a]] })),

@@ -25,7 +25,7 @@
 //    mind a 4 láb kitelve. Díjak: limit 2 bp, stop és piaci zárás 5 bp.
 import { UNITS } from "./engine/tradeutil.js";
 
-export const ACC_NAMES = ["Fő", "Al1", "Al2", "Al3", "Al4", "Al5"];
+export const ACC_NAMES = ["Fő", "Al1", "Al2", "Al3", "Al4"];   // az OKX fő- és első 4 alszámlája; az 5. alszámla az SB (silver bullet + extrém izo)
 const DAY = 86400000, MAKER = 0.0002, TAKER = 0.0005;
 const SHARES = { full: [1, 0, 0, 0], split: [0.6, 0.25, 0.15, 0], swing: [0.6, 0.25, 0, 0.15] };
 
@@ -253,7 +253,7 @@ export function simulate(days, bars, cfg, now) {
     const free = ACC_NAMES.filter(a => !busy.has(a));
     if (!free.length) return;
     // a létra folytatása: az Al5 belépője utáni szint (az Al5 DCA1-e), onnan mindig az előző DCA1-e
-    const ladder = positions({ ...p, entry: { p: al5.legs[1].p, why: "izo: az Al5 belépője utáni szint" } }, ACC_NAMES.length);
+    const ladder = positions({ ...p, entry: { p: al5.legs[1].p, why: "izo: az utolsó cross belépője utáni szint" } }, ACC_NAMES.length);
     const taken = byDir[d].filter(t => t.kind === "izo").map(t => t.legs[0].p);
     ladder.forEach((pos, k) => {
       const acc = ACC_NAMES[k];

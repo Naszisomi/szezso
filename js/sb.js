@@ -178,8 +178,8 @@ export function simulateSB(bars, cfg) {
         if (x.l > x2.h) v.fvg = [x2.h, x.l]; else if (x.h < x2.l) v.fvg = [x.h, x2.l];
         if (v.fvg) v.j = j;
       }
-      // az ablak első 15m FVG-je (a jel): három, az ablakban kezdődő 15m gyertyából
-      if (win && !win.fvg && m15[j - 2] && m15[j - 2].t >= win.t) {
+      // az ablak első 15m FVG-je (a jel): amelyik az ablakban válik ismertté
+      if (win && !win.fvg && m15[j - 2] && m15[j].t >= win.t) {        // az FVG az ablakban derül ki (a 3. gyertyája az ablakban zár)
         const x = m15[j], x2 = m15[j - 2];
         if (x.l > x2.h) win.fvg = [x2.h, x.l]; else if (x.h < x2.l) win.fvg = [x.h, x2.l];
         if (win.fvg) win.log.push(`15m FVG ${win.fvg.map(f3).join(" – ")}`);

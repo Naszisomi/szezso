@@ -102,7 +102,7 @@ export function renderPaper(el, plans, key, rerender) {
     }), "Még nincs lezárt kereskedés."));
     o.push(`<h3>Kumulált PnL</h3>` + spark(pts, start));
   } else if (sub === "set") {
-    o.push(`<p>Számlánkénti kezdőegyenleg (alapból ${DEFAULT_BAL.toLocaleString("hu-HU")} $, 7 számla, összesen 102 000 $; az SB a silver bullet számlája, mind cross). A méretezés ebből számol: ${SWAN} $-os esés (long, legfeljebb 0-ig) vagy emelkedés (short) se likvidálja a számlát, mind a 4 láb kitelve.</p>`);
+    o.push(`<p>Számlánkénti kezdőegyenleg (alapból ${DEFAULT_BAL.toLocaleString("hu-HU")} $, 6 számla, mint az OKX-en, összesen 102 000 $: Fő és Al1–Al4 a rács, az SB az 5. alszámla – silver bullet és extrém izo). A méretezés ebből számol: ${SWAN} $-os esés (long, legfeljebb 0-ig) vagy emelkedés (short) se likvidálja a számlát, mind a 4 láb kitelve.</p>`);
     o.push(`<table>${ALL_ACC.map(a => `<tr><th>${a}</th><td><input type="number" step="100" min="0" data-bal="${a}" value="${bal[a]}"> $</td></tr>`).join("")}</table>`);
     const rm = getPref("paper.remMode", "a");
     o.push(`<h3>Részben zárt kereskedés DCA-ja (a maradék kiegészítése)</h3>` + [["a", "a) az első DCA az eredeti entry + DCA1 méretére egészít ki"], ["b", "b) az első DCA az eredeti entry méretére egészít ki"], ["c", "c) az első DCA a maradék méretével, utána duplázva"]]
@@ -121,7 +121,7 @@ export function renderPaper(el, plans, key, rerender) {
   const sv = el.querySelector("[data-save]");
   if (sv) sv.onclick = () => {
     const nb = {}; el.querySelectorAll("[data-bal]").forEach(i => nb[i.dataset.bal] = Math.max(0, +i.value || DEFAULT_BAL));
-    setPref("paper.bal", nb);
+    setPref("paper.bal6", nb);
     const r = el.querySelector('input[name="rm"]:checked'); if (r) setPref("paper.remMode", r.value);
     plans.runSim(key); rerender();
   };
