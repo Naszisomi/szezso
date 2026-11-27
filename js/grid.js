@@ -21,7 +21,7 @@
 //    katona, bekebelezés, doji a szélsőértéken).
 //  • Napváltáskor: a swing és a nem nyereséges kereskedés bent marad; a nyereséges többi, ha az új Ázsia-határnál rosszabb
 //    helyen van, zár; ha jobb helyen, a legfelső az új TP1-ig fut, a többi pozitív stopot kap. A meg nem nyílt megbízások törlődnek.
-//  • Méretezés (HYPE): a számla akkor se likvidálódjon, ha az ár 70 $-t esik (long, legfeljebb 0-ig) / emelkedik (short),
+//  • Méretezés (HYPE): a számla akkor se likvidálódjon, ha az ár 50 $-t esik (long, legfeljebb 0-ig) / emelkedik (short),
 //    mind a 4 láb kitelve. Díjak: limit 2 bp, stop és piaci zárás 5 bp.
 import { UNITS } from "./engine/tradeutil.js";
 

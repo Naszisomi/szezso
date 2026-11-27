@@ -2,7 +2,7 @@
 // kereskedései számlánként – pozíciók, megbízások, lezárt kereskedések, egyenlegtörténet, elemzés, egyenlegek.
 import { ACC_NAMES } from "./grid.js";
 import { getPref, setPref } from "./store.js";
-import { DEFAULT_BAL, ALL_ACC } from "./plans.js";
+import { DEFAULT_BAL, ALL_ACC, SWAN } from "./plans.js";
 
 const fmtT = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -74,7 +74,7 @@ export function renderPaper(el, plans, key, rerender) {
     ].map(([a, b]) => `<div class="card"><div class="muted">${a}</div><div class="v">${b}</div></div>`).join("") + `</div>`);
     o.push(`<h3>Kumulált PnL</h3>` + spark(pts, start));
   } else if (sub === "set") {
-    o.push(`<p>Számlánkénti kezdőegyenleg (alapból ${DEFAULT_BAL.toLocaleString("hu-HU")} $, 7 számla, összesen 102 000 $; az SB a silver bullet számlája, mind cross). A méretezés ebből számol: 70 $-os esés (long, legfeljebb 0-ig) vagy emelkedés (short) se likvidálja a számlát, mind a 4 láb kitelve.</p>`);
+    o.push(`<p>Számlánkénti kezdőegyenleg (alapból ${DEFAULT_BAL.toLocaleString("hu-HU")} $, 7 számla, összesen 102 000 $; az SB a silver bullet számlája, mind cross). A méretezés ebből számol: ${SWAN} $-os esés (long, legfeljebb 0-ig) vagy emelkedés (short) se likvidálja a számlát, mind a 4 láb kitelve.</p>`);
     o.push(`<table>${ALL_ACC.map(a => `<tr><th>${a}</th><td><input type="number" step="100" min="0" data-bal="${a}" value="${bal[a]}"> $</td></tr>`).join("")}</table>`);
     const rm = getPref("paper.remMode", "a");
     o.push(`<h3>Részben zárt kereskedés DCA-ja (a maradék kiegészítése)</h3>` + [["a", "a) az első DCA az eredeti entry + DCA1 méretére egészít ki"], ["b", "b) az első DCA az eredeti entry méretére egészít ki"], ["c", "c) az első DCA a maradék méretével, utána duplázva"]]

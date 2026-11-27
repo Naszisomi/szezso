@@ -16,6 +16,8 @@ export { ACC_NAMES };
 const H = 3600000, DAY = 86400000, KEEP_DAYS = 30, TV = 6;
 const COL = { long: "#089981", short: "#F23645", done: "#9E9E9E", old: "#8D6E63", pos: "#2962FF" };   // long zöld, short piros, teljesült szürke, előző napi barna
 const fmtDay = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "short", day: "numeric" });
+// méretezés: ekkora esés (long, legfeljebb 0-ig) / emelkedés (short) se likvidálja a számlát, mind a 4 láb kitelve
+export const SWAN = 50;
 export const DEFAULT_BAL = Math.round(102000 / 7 * 100) / 100;   // 7 számla: Fő, Al1–Al5 (rács) és SB (silver bullet), mind cross
 export const ALL_ACC = [...ACC_NAMES, "SB"];
 
@@ -220,9 +222,9 @@ export class PlanManager {
       if (day.short) day.short = { ...day.short, swingX: ap.long.map(a => ({ p: a.p, why: "a rajzod nyila" })) };
     }
     const bars = d.bars15.filter(b => b.t >= (days[0] ? days[0].T : Infinity));
-    const sim = simulate(days, bars, { bal: this.balances(), remMode: getPref("paper.remMode", "a"), swan: 70, six: hype ? 6 : null, sized: hype, minTp2: (avg, p) => hype ? 2 : Math.max(2 * ((p && p.atr) || avg * 0.004), avg * 0.004) }, Date.now());
+    const sim = simulate(days, bars, { bal: this.balances(), remMode: getPref("paper.remMode", "a"), swan: SWAN, six: hype ? 6 : null, sized: hype, minTp2: (avg, p) => hype ? 2 : Math.max(2 * ((p && p.atr) || avg * 0.004), avg * 0.004) }, Date.now());
     sim.days = days; sim.key = key; sim.hype = hype;
-    if (hype && d.bars5 && days[0]) sim.sb = simulateSB(d.bars5.filter(b => b.t >= days[0].T), { gap: 3, tick: this.insts[key].tick, sized: true, bal: this.balances()["SB"], swan: 70,
+    if (hype && d.bars5 && days[0]) sim.sb = simulateSB(d.bars5.filter(b => b.t >= days[0].T), { gap: 3, tick: this.insts[key].tick, sized: true, bal: this.balances()["SB"], swan: SWAN,
       // vastag egyezésvonalak a silver bullet belépőjéhez: az adott nap tervéből (15m, 1h, 4h)
       cfLines: t => { const day = days.filter(x => x.T <= t).pop() || days[0]; return ["long", "short"].flatMap(k => day[k] && day[k].cand ? ["m15", "h1", "h4"].flatMap(f => (day[k].cand[f] && day[k].cand[f].cf) || []) : []).filter(g => g.n >= 5); } });
     this.sims.set(key, sim);

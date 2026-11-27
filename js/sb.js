@@ -11,7 +11,7 @@
 //  • TP: az FVG közelebbi széle (2 tickkel előtte), egyben zárva. Ha az ablakban nem jön össze, a kereskedés marad,
 //    és a TP a következő ablak FVG-jéhez igazodik.
 //  • Ha összejön, új belépő a következő ablakban. Egyszerre egy silver bullet kereskedés fut.
-//  • Méret: az SB számla egyenlegéből, a rácséval azonos feltétellel (70 $-os esés/emelkedés se likvidálja), díjak: limit 2 bp.
+//  • Méret: az SB számla egyenlegéből, a rácséval azonos feltétellel (50 $-os esés/emelkedés se likvidálja), díjak: limit 2 bp.
 import { nyOffset } from "./ind/milana.js";
 import { UNITS } from "./engine/tradeutil.js";
 import { unitFor } from "./grid.js";
