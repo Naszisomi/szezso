@@ -5,6 +5,9 @@
 //  • A lényeg: az ár visszatér a kiindulóponthoz. A cél (TP) az ablak Milana-nyitásának első FVG-je (15m, ahogy a
 //    Milana rajzolja – gyakorlatilag az iFVG / abandoned baby, amit az ár céloz): London → TLO FVG, NY AM → NYAM FVG,
 //    NY PM → TPM FVG; a belépő felőli széle, 2 tickkel előtte.
+//    Ha az FVG-n belül rés van (iFVG / abandoned baby: 3 gyertyás FVG vagy két gyertya kanóca közti rés, 15m), azt az ár
+//    kitölti és visszaellenőrzi – ilyenkor az a cél: a belépő felől elsőként elért, még ki nem töltött belső rés TÚLSÓ széle
+//    (short: az alja, long: a teteje), 2 tickkel előtte. A várakozó megbízás TP-je gyertyánként frissül, teljesüléskor rögzül.
 //  • Az ablak első 5m FVG-je a jel: miután kiderült, MINDKÉT irányba kerül limit megbízás –
 //    short az FVG fölötti, long az FVG alatti legvastagabb egyezésvonalon (n ≥ 5), az ártól legfeljebb 2,5 15m-ATR-re.
 //    Pl. nov. 27. London: short 66,65, long 65,15, mindkettő TP-je a TLO FVG.
@@ -54,7 +57,28 @@ export function simulateSB(bars, cfg) {
     if (t.state === "vár") t.state = "aktív";
     wlog(t, `${side(t.dir)} ${k ? "DCA" + k : "belépő"} teljesült ${f3(l.p)}`);
   };
-  const setTp = (t, p, why, b) => { t.tp = { p, why }; t.tps = [t.tp]; t.tpLog.push({ t: b.t, p, why }); };
+  const setTp = (t, p, why, b) => { if (t.tp && t.tp.p === p) return; t.tp = { p, why }; t.tps = [t.tp]; t.tpLog.push({ t: b.t, p, why }); };
+  // a cél: a nyitás FVG-jének belépő felőli széle, vagy – ha van – az FVG-n belüli, még ki nem töltött rés túlsó széle
+  const tpFor = (dir, k, L) => {
+    const [gb, gt] = L.fvg, edge = dir > 0 ? gb : gt, inner = [];
+    const all = c15 ? [...m15, c15] : m15;
+    for (let j = L.j + 1; j < m15.length; j++) {
+      const x = m15[j], x1 = m15[j - 1], x2 = m15[j - 2], gs = [];
+      if (x.l > x2.h) gs.push([x2.h, x.l, "iFVG"]); else if (x.h < x2.l) gs.push([x.h, x2.l, "iFVG"]);
+      if (x.l > x1.h) gs.push([x1.h, x.l, "rés"]); else if (x.h < x1.l) gs.push([x.h, x1.l, "rés"]);
+      for (const [lo0, hi0, nm] of gs) {
+        if (lo0 < gb - tick || hi0 > gt + tick || hi0 - lo0 < 2 * tick) continue;   // teljesen az FVG-n belül legyen
+        const lo = lo0, hi = hi0;
+        // még ki nem töltött: a belépő felőli irányból a túlsó szélét azóta nem érte el az ár
+        let open = true;
+        for (let q = j + 1; q < all.length; q++) if (dir < 0 ? all[q].l <= lo : all[q].h >= hi) { open = false; break; }
+        if (open) inner.push({ lo, hi, nm });
+      }
+    }
+    if (!inner.length) return { p: edge - dir * 2 * tick, why: `${k} FVG ${f3(edge)} (2 tickkel előtte)` };
+    const g = inner.sort((a, z) => dir < 0 ? z.hi - a.hi : a.lo - z.lo)[0], far = dir < 0 ? g.lo : g.hi;
+    return { p: far - dir * 2 * tick, why: `${k} FVG-n belüli ${g.nm} ${f3(g.lo)} – ${f3(g.hi)} kitöltése (${f3(far)}, 2 tickkel előtte)` };
+  };
 
   for (let i = 2; i < bars.length; i++) {
     const b = bars[i], { m, wd } = nyMin(b.t);
@@ -68,6 +92,7 @@ export function simulateSB(bars, cfg) {
       for (const [k, v] of Object.entries(lv)) if (!v.fvg && j - 2 >= v.i15) {
         const x = m15[j], x2 = m15[j - 2];
         if (x.l > x2.h) v.fvg = [x2.h, x.l]; else if (x.h < x2.l) v.fvg = [x.h, x2.l];
+        if (v.fvg) v.j = j;
       }
     }
     // ablak
@@ -84,6 +109,7 @@ export function simulateSB(bars, cfg) {
         const late = (win && win.key !== t.wkey) || (!win && (!lastWin || b.t >= lastWin.tEnd + AFTER));
         if (late) { t.state = "lejárt"; t.closeT = b.t; wlog(t, `${side(d)} törölve: lejárt, nem teljesült`); continue; }
       }
+      if (t.state === "vár" && t.L) { const x = tpFor(d, t.target, t.L); if (x.p !== t.tp.p) { setTp(t, x.p, x.why, b); wlog(t, `${side(d)} TP frissítve → ${f3(x.p)} (${x.why})`); } }
       let filled = false;
       while (t.filled < 4 && (d > 0 ? b.l <= t.legs[t.filled].p : b.h >= t.legs[t.filled].p)) { fill(t, t.filled, b); filled = true; }
       if (t.state !== "aktív") continue;
@@ -113,7 +139,7 @@ export function simulateSB(bars, cfg) {
     if (!act.tgtLog) { act.tgtLog = true; act.log.push(`cél: ${TARGET[act.idx]} FVG ${f3(gb)} – ${f3(gt)}`); }
     for (const dir of [-1, 1]) {
       if (act.placed[dir]) continue;
-      const edge = dir > 0 ? gb : gt, tpP = edge - dir * 2 * tick, why = `${TARGET[act.idx]} FVG ${f3(edge)} (2 tickkel előtte)`;
+      const edge = dir > 0 ? gb : gt, tx = tpFor(dir, TARGET[act.idx], L), tpP = tx.p, why = tx.why;
       const run = live().find(t => t.dir === dir);
       if (run) {
         act.placed[dir] = true;
@@ -130,10 +156,10 @@ export function simulateSB(bars, cfg) {
       const e = c.p, legs = [0, 1, 2, 3].map(k => ({ p: e - dir * gap * k, why: k ? "DCA" + k : `entry (EGYEZÉS ${c.n})`, units: UNITS[k] }));
       const unit = cfg.sized ? unitFor(cfg.bal || 14571, dir, legs, cfg.swan || 70) : 1;
       const t = { id: ++id, acc: "SB", dir, legs, unit, filled: 0, qty: 0, cost: 0, avg: null, open: 0, state: "vár", from: b.t, day: act.t, window: WNAME[act.idx],
-        wkey: act.key, fvg: act.fvg, target: TARGET[act.idx], atr: atr[i], fills: [], exits: [], fees: 0, realized: 0, closeT: null, lastFill: -1, tpHit: [], shares: [1], tpLog: [] };
+        wkey: act.key, fvg: act.fvg, target: TARGET[act.idx], L, atr: atr[i], fills: [], exits: [], fees: 0, realized: 0, closeT: null, lastFill: -1, tpHit: [], shares: [1], tpLog: [] };
       setTp(t, tpP, why, b);
       trades.push(t); act.placed[dir] = true;
-      act.log.push(`megbízás: ${side(dir)} limit ${f3(e)} (EGYEZÉS ${c.n}) → TP ${f3(tpP)} (${TARGET[act.idx]} FVG)`);
+      act.log.push(`megbízás: ${side(dir)} limit ${f3(e)} (EGYEZÉS ${c.n}) → TP ${f3(tpP)} (${why})`);
     }
   }
   function d0(t, p) { return t.dir * (p - t.avg) > 0; }
