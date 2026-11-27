@@ -22,7 +22,7 @@ export const SWAN = 50;
 export const DEFAULT_BAL = Math.round(102000 / 7 * 100) / 100;   // 7 számla: Fő, Al1–Al5 (rács) és SB (silver bullet), mind cross
 export const ALL_ACC = [...ACC_NAMES, "SB"];
 // szabályverzió: minden szabályváltozásnál nő; az élő napló eseményei ezt is rögzítik
-export const RULES = { v: 1, date: "2026-11-27", note: "napló-indító: rács + SB (London/TNY/NY AM/NY PM), szűrők, C2, vészfék 20 %, tick-átütés, csúszás" };
+export const RULES = { v: 1.1, date: "2026-11-27", note: "napló-indító: rács + SB (London/TNY/NY AM/NY PM), szűrők, C2, vészfék 20 %, tick-átütés, csúszás; javítás: TP1 a legközelebbi vastag egyezésvonalon (mai terv), pozitív SL 1 $ nyereségtől (nem swing)", reset: 3 };
 // görbe [[t, érték]] → függvény: az utolsó t-ig ismert érték
 function curveAt(c) { return t => { let lo = 0, hi = c.length - 1, r = 0; while (lo <= hi) { const m = (lo + hi) >> 1; if (c[m][0] <= t) { r = c[m][1]; lo = m + 1; } else hi = m - 1; } return r; }; }
 

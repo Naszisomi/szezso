@@ -19,10 +19,11 @@ export function updateJournal(sim, bal, rules) {
   if (sim.last) cut = Math.min(cut, sim.last.t);
   if (sim.sb && sim.sb.last) cut = Math.min(cut, Math.floor(sim.sb.last.t / Q) * Q);
   let j = loadJournal(sim.key), dirty = false;
-  if (j && j.v !== 2) j = null;                                           // a régi (nulláról induló) napló helyett újraindítás
+  // újraindítás: régi formátum, vagy hibajavítás miatti újraszámolás (a szabályverzió reset-száma nő)
+  if (j && (j.v !== 2 || (j.reset || 0) < (rules.reset || 0))) j = null;
   if (!j) {
     // indítás: a v1 szabályokkal újraszámolt múlt minden eseménye bekerül (ez a kiinduló), az egyenlegek a beállítottak
-    j = { v: 2, key: sim.key, start: cut, lastT: 0, rules: [{ ...rules, from: cut }], startBal: { ...bal }, pos: [], ev: [] };
+    j = { v: 2, reset: rules.reset || 0, key: sim.key, start: cut, lastT: 0, rules: [{ ...rules, from: cut }], startBal: { ...bal }, pos: [], ev: [] };
     dirty = true;
   }
   if (!j.rules.some(r => r.v === rules.v)) { j.rules.push({ ...rules, from: j.lastT }); dirty = true; }

@@ -97,6 +97,12 @@ function nearest(p, tf, d, from, step) {
     const cf = all.filter(x => x.cf && d * (x.p - all[0].p) <= win).sort((a, b) => b.cf - a.cf)[0];
     if (cf) t = { p: cf.p - d * 2 * (p.tick || 0), why: cf.why + " (2 tickkel előtte)" };
   }
+  // TP1: ha a minimális távolságon túl van közelebbi vastag egyezésvonal (n ≥ 5, a mai tervből), az ár ott zár
+  if (tf === "m15") {
+    const lines = p.cfNow || ["m15", "h1", "h4"].flatMap(k => (p.cand && p.cand[k] && p.cand[k].cf) || []).filter(g => g.n >= 5);
+    const c = lines.filter(g => d * (g.p - d * 2 * (p.tick || 0) - from) >= 0).sort((a, b) => d * (a.p - b.p))[0];
+    if (c && (!t || d * (c.p - d * 2 * (p.tick || 0) - t.p) < 0)) t = { p: c.p - d * 2 * (p.tick || 0), why: `EGYEZÉS ${c.n} (${(c.codes || []).join("·")}) – legközelebbi vastag vonal (2 tickkel előtte)` };
+  }
   const l = p.levels.filter(x => d > 0 ? x.p > from : x.p < from).sort((a, b) => d * (a.p - b.p))[0];
   // ha az idősík célja nagyon messze van (> 5%), a közelebbi stratégiai szint a tartalék
   if (t && !(l && d * (t.p - from) > Math.abs(from) * 0.05 && d * (l.p - from) < d * (t.p - from))) return t;
@@ -248,6 +254,10 @@ export function simulate(days, bars, cfg, now) {
 
   // napváltás: a megbízások törlése, a nyitott kereskedések kezelése
   const rollover = (day, price, T) => {
+    // a mai terv vastag egyezésvonalai: a futó (korábbi napi) kereskedések TP1-e is ezekhez igazodik
+    const nowLines = [day.long, day.short].flatMap(p => p && p.cand ? ["m15", "h1", "h4"].flatMap(k => (p.cand[k] && p.cand[k].cf) || []) : []).filter(g => g.n >= 5);
+    for (const p of [day.long, day.short]) if (p) p.cfNow = nowLines;
+    for (const d of [1, -1]) for (const t of byDir[d]) t.plan = { ...t.plan, cfNow: nowLines };
     for (const d of [1, -1]) {
       const p = d > 0 ? day.long : day.short;
       for (const t of byDir[d]) if (t.state === "vár") { t.state = "lejárt"; t.closeT = T; }
@@ -353,6 +363,10 @@ export function simulate(days, bars, cfg, now) {
             if (isOpen(t) && t.role !== "swing" && t.stop == null) { t.stop = t.avg * (1 + d * (MAKER + TAKER)); t.stopT = b.t; t.state = "részben"; }
             else if (t.state === "aktív") t.state = "részben";
           }
+        }
+        // pozitív (nullszintű) stop: ha a nem-swing kereskedés legalább 1 $ (fél TP2-táv) nyereségbe ért, nem fordulhat vissza veszteségbe
+        if (isOpen(t) && t.role !== "swing" && t.stop == null && d * ((d > 0 ? b.h : b.l) - t.avg) >= cfg.minTp2(t.avg, t.plan) / 2) {
+          t.stop = t.avg * (1 + d * (MAKER + TAKER)); t.stopT = b.t;
         }
         if (isOpen(t) && t.stop != null && b.t > t.stopT && touch(b, d, t.stop)) { exit(t, t.open, t.stop, b.t, "pozitív stop", TAKER); re = true; }
       }
