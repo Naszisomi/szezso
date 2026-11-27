@@ -230,7 +230,11 @@ export function simulate(days, bars, cfg, now) {
   // új megbízások a nap tervéből a szabad számlákra
   // Számlánként és irányonként 2 kereskedés lehet: egy cross (1. kör: Fő → Al1 → … → Al5) és egy izo (2. kör: ha az Al5
   // cross-a beindult, a létra folytatódik – Fő izo az Al5 belépője utáni szinten, majd Al1 … Al5 izo), mind 3 DCA-val.
-  const curPlan = { 1: null, [-1]: null };
+  const curPlan = { 1: null, [-1]: null }, curBeyond = { 1: null, [-1]: null };
+  // a futó swing-maradékot (TP1/TP2 után) tartó számla nem kap új rács-kereskedést – így nem keveredik a logika
+  const swingAccs = () => [1, -1].flatMap(d => byDir[d].filter(t => isOpen(t) && t.role === "swing" && t.exits.length > 0).map(t => t.acc));
+  // a lánc vége: a legtávolabbi futó vagy várakozó cross belépő (az újonnan beálló számla ezen túl kap helyet)
+  const chainEnd = d => { const xs = byDir[d].filter(t => t.kind !== "izo" && (t.state === "vár" || isOpen(t))).map(t => t.legs[0].p); return xs.length ? (d > 0 ? Math.min(...xs) : Math.max(...xs)) : null; };
   const mkTrade = (p, T, dayT, revised, acc, legs, kind, eq) => {
     const d = p.dir, unit = cfg.sized ? unitFor(eq, d, legs, cfg.swan || 70) : 1;
     const t = { id: ++id, dir: d, acc, day: dayT, from: T, plan: p, legs, unit, filled: 0, qty: 0, cost: 0, avg: null, open: 0,
@@ -249,7 +253,7 @@ export function simulate(days, bars, cfg, now) {
     if (halted || !p) return;
     const al5 = byDir[d].find(t => t.kind !== "izo" && t.acc === ACC_NAMES[ACC_NAMES.length - 1] && isOpen(t));
     if (!al5) return;
-    const busy = new Set(byDir[d].filter(t => t.kind === "izo").map(t => t.acc)), gap = p.gap || 3;
+    const busy = new Set([...byDir[d].filter(t => t.kind === "izo").map(t => t.acc), ...swingAccs()]), gap = p.gap || 3;
     const free = ACC_NAMES.filter(a => !busy.has(a));
     if (!free.length) return;
     // a létra folytatása: az Al5 belépője utáni szint (az Al5 DCA1-e), onnan mindig az előző DCA1-e
@@ -270,7 +274,7 @@ export function simulate(days, bars, cfg, now) {
     if (halted) return;
     const d = p.dir, gap = p.gap || 3, open = byDir[d].filter(t => isOpen(t) && t.kind !== "izo");
     curPlan[d] = { ...p, T: dayT };
-    const busy = new Set(byDir[d].filter(t => t.kind !== "izo").map(t => t.acc));
+    const busy = new Set([...byDir[d].filter(t => t.kind !== "izo").map(t => t.acc), ...swingAccs()]);
     const free = ACC_NAMES.filter(a => !busy.has(a));
     const occupied = x => open.some(t => Math.abs(t.legs[0].p - x) < gap);
     for (const pos of positions(p)) {
@@ -312,6 +316,7 @@ export function simulate(days, bars, cfg, now) {
       // 6 $-os szabály: ha az ár legalább 6 $-ra van a legtávolabbi futó entrytől, új rács-entry csak azon túl
       const far = byDir[d].slice().sort((a, b) => d * (a.legs[0].p - b.legs[0].p))[0];
       if (far && p && d * (price - far.legs[0].p) >= (cfg.six ?? (p.gap || 3) * 2)) beyond = far.legs[0].p;
+      curBeyond[d] = beyond;
       if (p) place(p, T, day.T, false, beyond);
     }
   };
@@ -404,8 +409,21 @@ export function simulate(days, bars, cfg, now) {
         }
         if (isOpen(t) && t.stop != null && b.t > t.stopT && touch(b, d, t.stop)) { exit(t, t.open, t.stop, b.t, "pozitív stop", TAKER); re = true; }
       }
+      const before = byDir[d].filter(t => t.kind !== "izo").length;
       byDir[d] = byDir[d].filter(t => t.state === "vár" || isOpen(t));
       if (re) rank(d);
+      // napközben felszabadult számla: azonnal beáll a lánc végére (nem vár a másnapi tervig)
+      const freed = byDir[d].filter(t => t.kind !== "izo").length < before;
+      if (freed && curPlan[d]) place(curPlan[d], b.t, curPlan[d].T, false, chainEnd(d));
+    }
+    // swing-maradékot tartó számla várakozó rács-megbízásai törlődnek, a helyükre a következő szabad számla áll be
+    const sw = new Set(swingAccs());
+    for (const d of [1, -1]) {
+      if (!byDir[d].some(t => t.state === "vár" && sw.has(t.acc))) continue;
+      // a várakozó lánc újraépül a megmaradt számlákkal (a sorrend a következő szabad számlától folytatódik)
+      for (const t of byDir[d]) if (t.state === "vár" && t.kind !== "izo") { t.state = "lejárt"; t.closeT = b.t; }
+      byDir[d] = byDir[d].filter(t => t.state !== "lejárt");
+      if (curPlan[d]) place(curPlan[d], b.t, curPlan[d].T, false, curBeyond[d]);
     }
     lastPrice = b.c;
     // a fiók saját tőkéje a gyertya végén (a másik szimuláció – SB – becsült görbéjével együtt); 20 % esés → vészfék

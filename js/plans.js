@@ -22,7 +22,7 @@ export const SWAN = 50;
 export const DEFAULT_BAL = 102000 / 6;   // 6 OKX-számla: Fő, Al1–Al4 (rács) és Al5 = SB (silver bullet + extrém izo) – 17 000 $ mindegyik
 export const ALL_ACC = [...ACC_NAMES, "SB"];
 // szabályverzió: minden szabályváltozásnál nő; az élő napló eseményei ezt is rögzítik
-export const RULES = { v: 2.2, date: "2026-11-27", reset: 4,
+export const RULES = { v: 2.3, date: "2026-11-27", reset: 4,
   note: "végleges felosztás: 6 OKX-számla, 17 000 $ mindegyik – Fő, Al1–Al4 rács (cross + izo kör, 3 DCA), Al5 = SB (silver bullet + extrém izo); a napló ezzel újraszámolva",
   changes: [
     { v: 1, note: "napló-indító: rács + SB (London/TNY/NY AM/NY PM), szűrők, C2, vészfék 20 %, tick-átütés, csúszás" },
@@ -31,7 +31,8 @@ export const RULES = { v: 2.2, date: "2026-11-27", reset: 4,
     { v: 1.3, note: "rács: számlánként és irányonként cross + izo; az izo kör az utolsó cross indulása után, a cross méretével" },
     { v: 2, note: "6 számla (5 rács + SB), 17 000 $ / számla" },
     { v: 2.1, note: "extrém izo jel: 15m RSI 20/80 + 1h RSI 30/70 + 15m J (C változat, az 55 napos valódi adat alapján)" },
-    { v: 2.2, note: "az egyezésvonalakba (DWM) a heti és a havi zárás is bekerül; az ICT-ablakok hétvégén is futnak" }] };
+    { v: 2.2, note: "az egyezésvonalakba (DWM) a heti és a havi zárás is bekerül; az ICT-ablakok hétvégén is futnak" },
+    { v: 2.3, note: "rács: a napközben felszabadult számla azonnal a lánc végére áll; a swing-maradékot tartó számla nem kap új rács-kereskedést (a várakozó lánc a többi számlával újraépül)" }] };
 // görbe [[t, érték]] → függvény: az utolsó t-ig ismert érték
 function curveAt(c) { return t => { let lo = 0, hi = c.length - 1, r = 0; while (lo <= hi) { const m = (lo + hi) >> 1; if (c[m][0] <= t) { r = c[m][1]; lo = m + 1; } else hi = m - 1; } return r; }; }
 
