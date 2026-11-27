@@ -131,13 +131,14 @@ export function simulateSB(bars, cfg) {
         } else if (!act.noLvl) { act.noLvl = true; act.log.push(`nincs erős szint az ár ${dir > 0 ? "alatt" : "fölött"} 2,5 ATR-en belül (${+b.c.toFixed(3)})`); }
       }
     }
-    // a várakozó megbízás törlése, ha az ár előbb visszaért az FVG-hez, vagy lejárt az idő
+    // a várakozó megbízás törlése, ha az ár előbb visszaért az FVG-hez (ilyenkor új belépőt keres ugyanarra a célra), vagy lejárt az idő
     if (pending && pending.state === "vár") {
       const [fb, ft] = pending.fvg, back = pending.dir < 0 ? b.l <= ft : b.h >= fb;
       const late = (win && win.key !== pending.wkey) || (!win && (!lastWin || b.t >= lastWin.tEnd + AFTER));
       if (back || late) {
         const w = logs.find(x => x.key === pending.wkey);
-        if (w) w.log.push(back ? "törölve: az ár előbb visszaért az FVG-hez" : "törölve: lejárt, nem teljesült");
+        if (w) w.log.push(back && !late ? "törölve (az ár előbb visszaért az FVG-hez) → új belépő, ha újra eltávolodik" : "törölve: lejárt, nem teljesült");
+        if (w && back && !late) { w.done = false; w.noLvl = false; w.retry = (w.retry || 0) + 1; }
         pending.state = "lejárt"; pending.closeT = b.t; if (cur === pending) cur = null; pending = null;
       }
     }
