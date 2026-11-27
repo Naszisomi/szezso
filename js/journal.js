@@ -72,7 +72,7 @@ export function journalView(j, sim) {
   for (const T of byK.values()) {
     const s = simBy.get(T.k);
     if (!s) { T.orphan = true; continue; }
-    Object.assign(T, { tp: s.tp, tps: s.tps, shares: s.shares, tpHit: s.tpHit, role: s.role, stop: s.stop, stopT: s.stopT, legs: s.legs, unit: s.unit, filled: s.filled });
+    Object.assign(T, { tp: s.tp, tps: s.tps, shares: s.shares, tpHit: s.tpHit, role: s.role, stop: s.stop, stopT: s.stopT, legs: s.legs, unit: s.unit, filled: s.filled, iso: s.iso, margin: s.margin, ext: s.ext });
     if (T.state !== "lezárva" && s.avg) T.avg = s.avg;
     if (T.state !== "lezárva" && OPENST.includes(s.state)) T.state = s.state;
   }

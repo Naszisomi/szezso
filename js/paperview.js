@@ -30,9 +30,10 @@ export function renderPaper(el, plans, key, rerender) {
   const realized = events.reduce((s, e) => s + e.pnl, 0);
   const open = trades.filter(t => OPEN.includes(t.state) && t.open > 0), last = sim.last ? sim.last.c : NaN;
   const unreal = open.reduce((s, t) => s + t.dir * (last - t.avg) * t.open, 0);
-  const margin = open.reduce((s, t) => s + t.avg * t.open / 10, 0);
+  const mg = t => t.iso && t.margin ? t.margin : t.avg * t.open / 10;      // izolált: a lekötött (kiegészített) margin
+  const margin = open.reduce((s, t) => s + mg(t), 0);
   const o = [];
-  o.push(`<p style="float:right"><button data-export="1">⇩ Export (elemzéshez)</button></p>`);
+  o.push(`<p style="float:right"><button data-export="1">⇩ Export (elemzéshez)</button> <button data-export-data="1" title="A gyertyák, tervek és beállítások – ezzel a valódi napokon tesztelhetők a szabályok">⇩ Adat export (teszthez)</button></p>`);
   o.push(`<h2>Papírkereskedés – HYPE</h2>`);
   o.push(`<div class="ptabs"><button data-view="naplo" class="${J ? "on" : ""}">Élő napló</button><button data-view="ujra" class="${!J ? "on" : ""}">Újraszámolt (szabályteszt)</button></div>`);
   o.push(`<p class="muted">Szabályverzió: v${RULES.v} (${RULES.date}). ${J ? `Napló indult: ${fmtT.format(jv.start)} (előtte a v1 szabályokkal újraszámolt múlt a kiinduló) – ami bekerült, nem számolódik újra.` : `A mostani szabályokkal újrajátszva ${sim.days[0] ? fmtT.format(sim.days[0].T) : "–"} óta (szebb, mint a valóság).`}</p>`);
@@ -51,8 +52,8 @@ export function renderPaper(el, plans, key, rerender) {
   if (sub === "pos") {
     o.push(table(["Számla", "Irány", "Menny.", "Átlagár", "Utolsó ár", "Nem real. PnL", "%", "Érték", "Margin", "Szerep", "SL+"], open.map(t => {
       const u = t.dir * (last - t.avg) * t.open;
-      return [t.acc + (t.window ? " " + t.window : ""), side(t), t.open.toFixed(1), f(t.avg), f(last), `<span class="${cls(u)}">${usd(u)}</span>`, `${(u / (t.avg * t.open / 10) * 100).toFixed(2)}%`,
-        usd(t.avg * t.open, false), usd(t.avg * t.open / 10, false), t.acc === "SB" ? (t.tp ? "TP " + f(t.tp.p) : "–") : roleTxt(t), t.stop != null ? f(t.stop) : "–"];
+      return [t.acc + (t.window ? " " + t.window : ""), side(t), t.open.toFixed(1), f(t.avg), f(last), `<span class="${cls(u)}">${usd(u)}</span>`, `${(u / mg(t) * 100).toFixed(2)}%`,
+        usd(t.avg * t.open, false), usd(mg(t), false) + (t.iso ? " (izo)" : ""), t.acc === "SB" ? (t.tp ? "TP " + f(t.tp.p) : "–") : roleTxt(t), t.stop != null ? f(t.stop) : "–"];
     }), "Nincs nyitott pozíció."));
   } else if (sub === "ord") {
     const rows = [];
@@ -107,6 +108,8 @@ export function renderPaper(el, plans, key, rerender) {
   el.querySelectorAll("[data-sub]").forEach(b => b.onclick = () => { sub = b.dataset.sub; rerender(); });
   const ex = el.querySelector("[data-export]");
   if (ex) ex.onclick = () => exportAll(plans);
+  const exd = el.querySelector("[data-export-data]");
+  if (exd) exd.onclick = () => exportData(plans);
   const sv = el.querySelector("[data-save]");
   if (sv) sv.onclick = () => {
     const nb = {}; el.querySelectorAll("[data-bal]").forEach(i => nb[i.dataset.bal] = Math.max(0, +i.value || DEFAULT_BAL));
@@ -153,10 +156,23 @@ function exportAll(plans) {
       drawings: (() => { try { return JSON.parse(localStorage.getItem("szezso.draw." + key)) || []; } catch { return []; } })(),
     };
   }
+  download(out, "szezso-export");
+}
+// tesztadat: a nyers gyertyák (5m, 15m, 1h, 4h, 1D), a tervek, beállítások és rajzok – ebből a szimuláció pontosan visszajátszható
+function exportData(plans) {
+  const out = { exported: new Date().toISOString(), app: "szezso", kind: "testdata", rules: RULES, balances: plans.balances(),
+    prefs: { remMode: getPref("paper.remMode", "a") }, instruments: {} };
+  for (const [key, d] of plans.data.entries()) {
+    out.instruments[key] = { inst: plans.insts[key], days: plans.store(key).days, bars5: d.bars5 || [], bars15: d.bars15, bars1h: d.bars, bars4h: d.bars4, daily: d.daily,
+      drawings: (() => { try { return JSON.parse(localStorage.getItem("szezso.draw." + key)) || []; } catch { return []; } })(), journal: loadJournal(key) };
+  }
+  download(out, "szezso-tesztadat");
+}
+function download(out, name) {
   const blob = new Blob([JSON.stringify(out)], { type: "application/json" });
   const a = document.createElement("a"), d = new Date();
   a.href = URL.createObjectURL(blob);
-  a.download = `szezso-export-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}.json`;
+  a.download = `${name}-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}.json`;
   document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
 }

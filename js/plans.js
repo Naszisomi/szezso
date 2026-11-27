@@ -14,7 +14,7 @@ import { saveCandles, getPref } from "./store.js";
 import { arrowPlans } from "./drawings.js";
 export { ACC_NAMES };
 
-const H = 3600000, DAY = 86400000, KEEP_DAYS = 30, TV = 6;
+const H = 3600000, DAY = 86400000, KEEP_DAYS = 30, TV = 7;
 const COL = { long: "#089981", short: "#F23645", done: "#9E9E9E", old: "#8D6E63", pos: "#2962FF" };   // long zöld, short piros, teljesült szürke, előző napi barna
 const fmtDay = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "short", day: "numeric" });
 // méretezés: ekkora esés (long, legfeljebb 0-ig) / emelkedés (short) se likvidálja a számlát, mind a 4 láb kitelve
@@ -22,7 +22,8 @@ export const SWAN = 50;
 export const DEFAULT_BAL = Math.round(102000 / 7 * 100) / 100;   // 7 számla: Fő, Al1–Al5 (rács) és SB (silver bullet), mind cross
 export const ALL_ACC = [...ACC_NAMES, "SB"];
 // szabályverzió: minden szabályváltozásnál nő; az élő napló eseményei ezt is rögzítik
-export const RULES = { v: 1.1, date: "2026-11-27", note: "napló-indító: rács + SB (London/TNY/NY AM/NY PM), szűrők, C2, vészfék 20 %, tick-átütés, csúszás; javítás: TP1 a legközelebbi vastag egyezésvonalon (mai terv), pozitív SL 1 $ nyereségtől (nem swing)", reset: 3 };
+export const RULES = { v: 1.2, date: "2026-11-27", note: "napló-indító: rács + SB (London/TNY/NY AM/NY PM), szűrők, C2, vészfék 20 %, tick-átütés, csúszás; javítás: TP1 a legközelebbi vastag egyezésvonalon (mai terv), pozitív SL 1 $ nyereségtől (nem swing)", reset: 3,
+  changes: [{ v: 1.2, date: "2026-11-27", note: "új: extrém visszafordulás izolált kereskedés az SB számlán (RSI 15m+1h 20/80, J 15m; GP 9–10/10; 2 DCA; margin ≤ 10 %, +20 $ védelem; zárás vastag vonal vagy RSI/KDJ)" }] };
 // görbe [[t, érték]] → függvény: az utolsó t-ig ismert érték
 function curveAt(c) { return t => { let lo = 0, hi = c.length - 1, r = 0; while (lo <= hi) { const m = (lo + hi) >> 1; if (c[m][0] <= t) { r = c[m][1]; lo = m + 1; } else hi = m - 1; } return r; }; }
 
@@ -123,6 +124,7 @@ export class PlanManager {
     const thick = (iD.cf || []).slice().sort((a, b) => b.n - a.n)[0];
     if (thick) sw.push({ p: thick.p, why: `1D legvastagabb egyezés (${thick.n})` });
     p.cand.sw = sw;
+    p.cand.gpz = (i4.gpz || []).filter(z => z.strength >= 9).map(z => ({ upper: z.upper, lower: z.lower, strength: z.strength }));   // az extrém izo belépőjéhez
     p.cand.h1.cf = p.levels.filter(x => /^EGYEZÉS/.test(x.why || "")).map(x => { const m = /^EGYEZÉS (\d+) \((.*)\)/.exec(x.why) || []; return { p: x.p, n: +m[1] || 5, codes: (m[2] || "").split("·") }; });
     p.tick = this.insts[key].tick; p.atr = (p.tpGap || 0) * 4;
     delete p.gapTps; delete p.gapTps2; delete p.crtTps;
@@ -234,6 +236,7 @@ export class PlanManager {
     const gridCfg = { filter, tick, bal, remMode: getPref("paper.remMode", "a"), swan: SWAN, six: hype ? 6 : null, sized: hype, minTp2: (avg, p) => hype ? 2 : Math.max(2 * ((p && p.atr) || avg * 0.004), avg * 0.004) };
     const sbRun = hype && d.bars5 && days[0] ? extEq => simulateSB(d.bars5.filter(b => b.t >= days[0].T), { filter, tick, sized: true, bal: bal.SB, swan: SWAN, extStart: ACC_NAMES.reduce((s, a) => s + bal[a], 0), extEq,
       // vastag egyezésvonalak a silver bullet belépőjéhez: az adott nap tervéből (15m, 1h, 4h)
+      gpz: t => { const day = days.filter(x => x.T <= t).pop() || days[0]; return (day.long && day.long.cand && day.long.cand.gpz) || (day.short && day.short.cand && day.short.cand.gpz) || []; },
       cfLines: t => { const day = days.filter(x => x.T <= t).pop() || days[0]; return ["long", "short"].flatMap(k => day[k] && day[k].cand ? ["m15", "h1", "h4"].flatMap(f => (day[k].cand[f] && day[k].cand[f].cf) || []) : []).filter(g => g.n >= 5); } }) : null;
     // vészfék a teljes fiókra (rács + SB): az SB előzetes görbéje a rácsnak, a rács görbéje az SB-nek
     const sb0 = sbRun ? sbRun(null) : null;

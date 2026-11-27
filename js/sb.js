@@ -26,6 +26,7 @@ import { nyOffset } from "./ind/milana.js";
 import { UNITS } from "./engine/tradeutil.js";
 import { unitFor } from "./grid.js";
 import { makeFilter, to15 } from "./filters.js";
+import { rsi, kdj } from "./engine/osc.js";
 
 const MAKER = 0.0002, ASIA = 20 * 60, BE = 0.1;
 const WINDOWS = [[180, 240], [510, 570], [600, 660], [840, 900]];                 // percek NY idő szerint
@@ -54,12 +55,13 @@ export function simulateSB(bars, cfg) {
   // volumendivergenciák 5m-en és 15m-en, a megerősítésük (a swing után 5 gyertya) idejével
   const flt = cfg.filter || makeFilter(bars, to15(bars));
   let win = null, lastWin = null, id = 0, wasAsia = false;
-  const live = () => trades.filter(t => t.state === "vár" || t.state === "aktív");
+  const live = () => trades.filter(t => !t.ext && (t.state === "vár" || t.state === "aktív"));
+  const liveExt = () => trades.filter(t => t.ext && (t.state === "vár" || t.state === "aktív"));
   const wlog = (t, msg) => { const w = logs.find(x => x.key === t.wkey); if (w) w.log.push(msg); };
   const side = d => d > 0 ? "long" : "short";
 
-  const fill = (t, k, b) => {
-    const l = t.legs[k], q = l.units * t.unit, fee = q * l.p * MAKER;
+  const fill = (t, k, b, rate = MAKER) => {
+    const l = t.legs[k], q = l.units * t.unit, fee = q * l.p * rate;
     t.qty += q; t.open += q; t.cost += q * l.p; t.avg = t.cost / t.qty; t.filled = k + 1; t.lastFill = b.t; t.fees += fee;
     t.fills.push({ t: b.t, p: l.p, qty: q, why: k ? "DCA" + k : "entry", fee });
     real += -fee; events.push({ t: b.t, acc: "SB", pnl: -fee, trade: t.id, why: `SB ${side(t.dir)} ${k ? "DCA" + k : "entry"} díj` });
@@ -89,10 +91,78 @@ export function simulateSB(bars, cfg) {
     return { p: far - dir * 2 * tick, why: `${k} FVG-n belüli ${g.nm} ${f3(g.lo)} – ${f3(g.hi)} kitöltése (${f3(far)}, 2 tickkel előtte)` };
   };
 
+  // ── Extrém visszafordulás (izolált, az SB számlán) ──
+  // Jel a 15m gyertya zárásakor: 15m ÉS 1h RSI < 20 és 15m J < 0 → long; RSI > 80 és J > 100 → short (Ázsiában is).
+  // Belépő: friss 9–10/10-es golden pocket közeli szélén, ha 1 ATR-en belül van; különben piaci áron a záráskor.
+  // 2 DCA a vastag vonalakon; méret: a margin (izolált, a 20 $-os további mozgást is kibírja, mindhárom láb kitelve)
+  // legfeljebb az SB tőke 10 %-a. Zárás egyben, ami előbb jön: a legközelebbi vastag egyezésvonal az átlagártól ≥ 1 $-ra,
+  // vagy nyereségben a 15m RSI/KDJ megállítja (long: RSI ≥ 70 és J > 100; short: RSI ≤ 30 és J < 0). A TP mindig az átlagárból.
+  const b15 = to15(bars), b1h = [];
+  for (const x of b15) { const t = Math.floor(x.t / 3600000) * 3600000, y = b1h[b1h.length - 1];
+    if (y && y.t === t) { y.h = Math.max(y.h, x.h); y.l = Math.min(y.l, x.l); y.c = x.c; } else b1h.push({ t, o: x.o, h: x.h, l: x.l, c: x.c }); }
+  const r15 = rsi(b15.map(x => x.c)), J15 = kdj(b15).J, r1h = rsi(b1h.map(x => x.c));
+  const at15 = []; { let a = 0; for (let k = 0; k < b15.length; k++) { const x = b15[k], p = b15[k - 1] || x, tr = Math.max(x.h - x.l, Math.abs(x.h - p.c), Math.abs(x.l - p.c)); a = k < 14 ? (a * k + tr) / (k + 1) : (a * 13 + tr) / 14; at15.push(a); } }
+  const i15 = new Map(b15.map((x, k) => [x.t, k])), i1h = new Map(b1h.map((x, k) => [x.t, k]));
+  const EXT_CAP = cfg.extCap ?? 0.10, EXT_SWAN = cfg.extSwan ?? 20, EXT_MIN = cfg.extMin ?? 1, SLIP = 2 * tk;
+  let extCool = { 1: 0, [-1]: 0 };
+  const extTp = (t, lines, b) => {
+    const d = t.dir, c = lines.filter(g => d * (g.p - d * 2 * tick - t.avg) >= EXT_MIN).sort((x, y) => d * (x.p - y.p))[0];
+    const p = c ? c.p - d * 2 * tick : t.avg + d * EXT_MIN, why = c ? `EGYEZÉS ${c.n} – legközelebbi vastag vonal az átlagártól (${f3(t.avg)})` : `átlagár + ${EXT_MIN} $`;
+    setTp(t, p, why, b);
+  };
+  const extClose = (t, px, b, why, rate) => {
+    const q = t.open, fee = q * px * rate, pnl = t.dir * (px - t.avg) * q;
+    t.open = 0; t.fees += fee; t.realized += pnl; t.exits.push({ t: b.t, p: px, qty: q, why, pnl, fee });
+    t.state = "lezárva"; t.closeT = b.t; t.tpHit = [0]; extCool[t.dir] = b.t + 3600000;
+    real += pnl - fee; events.push({ t: b.t, acc: "SB", pnl: pnl - fee, trade: t.id, why: `Extrém izo ${side(t.dir)} ${why}` });
+  };
+  function extStep(i, b, lines) {
+    // élő extrém kereskedések: teljesülés, DCA, TP az átlagárból, zárás
+    const close15 = (b.t + 300000) % 900000 === 0, k15 = close15 ? i15.get(b.t - 600000) : null;
+    for (const t of liveExt()) {
+      const d = t.dir;
+      if (t.state === "vár" && b.t > t.expires) { t.state = "lejárt"; t.closeT = b.t; continue; }
+      let filled = false;
+      while (t.filled < t.legs.length && (d > 0 ? b.l <= t.legs[t.filled].p - tk : b.h >= t.legs[t.filled].p + tk)) { fill(t, t.filled, b); filled = true; }
+      if (t.state !== "aktív") continue;
+      if (filled) extTp(t, lines, b);
+      if (t.lastFill !== b.t && (d > 0 ? b.h >= t.tp.p + tk : b.l <= t.tp.p - tk)) { extClose(t, t.tp.p, b, "TP (vastag vonal)", MAKER); continue; }
+      if (k15 != null && d * (b.c - t.avg) > 0 && (d > 0 ? r15[k15] >= 70 && J15[k15] > 100 : r15[k15] <= 30 && J15[k15] < 0))
+        extClose(t, b.c - d * SLIP, b, `RSI ${Math.round(r15[k15])} / J ${Math.round(J15[k15])} megállította`, MAKER * 2.5);
+    }
+    // új jel a 15m záráskor
+    if (k15 == null || halted) return;
+    const h = Math.floor((b.t + 300000) / 3600000) * 3600000 - 3600000, k1 = i1h.get(h);      // az utolsó lezárt 1h gyertya
+    if (k1 == null) return;
+    const dir = r15[k15] < 20 && r1h[k1] < 20 && J15[k15] < 0 ? 1 : r15[k15] > 80 && r1h[k1] > 80 && J15[k15] > 100 ? -1 : 0;
+    if (!dir || liveExt().some(t => t.dir === dir) || b.t < extCool[dir]) return;
+    const atr = at15[k15], c = b.c, gpz = cfg.gpz ? cfg.gpz(b.t) : [];
+    // friss 9–10/10-es golden pocket a mozgás irányában, 1 ATR-en belül (long: alatta, short: fölötte)
+    const z = gpz.filter(g => dir > 0 ? g.upper <= c + tk && c - g.upper <= atr : g.lower >= c - tk && g.lower - c <= atr)
+      .sort((x, y) => Math.abs((dir > 0 ? x.upper : x.lower) - c) - Math.abs((dir > 0 ? y.upper : y.lower) - c))[0];
+    const inside = gpz.find(g => c <= g.upper && c >= g.lower);
+    const e = z && !inside ? (dir > 0 ? z.upper : z.lower) : c + dir * SLIP;
+    const legs = [{ p: e, why: z && !inside ? `entry (golden pocket ${z.strength}/10)` : "entry (piaci, extrém RSI/KDJ)", units: UNITS[0] }];
+    const beyond = lines.filter(g => -dir * (g.p - e) > 0).sort((x, y) => Math.abs(x.p - e) - Math.abs(y.p - e));
+    for (let k = 1; k < 3; k++) { const prev = legs[k - 1].p, g = beyond.find(x => -dir * (x.p - prev) >= 0.5 * atr);
+      legs.push(g ? { p: g.p, why: `DCA${k} (EGYEZÉS ${g.n})`, units: UNITS[k] } : { p: prev - dir * atr, why: `DCA${k} (1 ATR)`, units: UNITS[k] }); }
+    // izolált margin egységenként: a 10× kezdő margin, de legalább a 20 $-os további mozgás vesztesége (mind a 3 láb kitelve)
+    const notional = legs.reduce((s2, l) => s2 + l.units * l.p, 0), worst = e - dir * EXT_SWAN;
+    const loss = legs.reduce((s2, l) => s2 + l.units * dir * (l.p - worst), 0), perUnit = Math.max(notional / 10, loss) * 1.05;
+    const cap = EXT_CAP * ((cfg.bal || 14571) + real), unit = Math.floor(cap / perUnit * 10) / 10;
+    if (unit <= 0) return;
+    const t = { id: ++id, acc: "SB", ext: true, iso: true, dir, legs, unit, margin: perUnit * unit, filled: 0, qty: 0, cost: 0, avg: null, open: 0, state: "vár", from: b.t, day: b.t,
+      window: "Extrém izo", wkey: "ext" + b.t, expires: b.t + 3600000, fills: [], exits: [], fees: 0, realized: 0, closeT: null, lastFill: -1, tpHit: [], shares: [1], tpLog: [],
+      why: `15m RSI ${Math.round(r15[k15])}, 1h RSI ${Math.round(r1h[k1])}, J ${Math.round(J15[k15])}` };
+    setTp(t, e + dir * EXT_MIN, "előzetes (átlagár + 1 $)", b);
+    trades.push(t);
+    if (!(z && !inside)) { fill(t, 0, b, MAKER * 2.5); extTp(t, lines, b); }
+  }
+
   for (let i = 2; i < bars.length; i++) {
     const b = bars[i], { m, wd } = nyMin(b.t);
     // a fiók saját tőkéje az előző gyertya végén (a rács becsült görbéjével együtt); 20 % esés → vészfék
-    { const pc = bars[i - 1].c; let eq = real; for (const t of live()) if (t.state === "aktív") eq += t.dir * (pc - t.avg) * t.open;
+    { const pc = bars[i - 1].c; let eq = real; for (const t of [...live(), ...liveExt()]) if (t.state === "aktív") eq += t.dir * (pc - t.avg) * t.open;
       curve.push([bars[i - 1].t, eq]);
       const tot = START + eq + (cfg.extEq ? cfg.extEq(bars[i - 1].t) : 0), h = tot < START * (1 - (cfg.halt ?? 0.2));
       if (h !== halted) { halted = h; halts.push({ t: b.t, on: h, eq: tot }); } }
@@ -151,6 +221,8 @@ export function simulateSB(bars, cfg) {
         real += pnl - fee; events.push({ t: b.t, acc: "SB", pnl: pnl - fee, trade: t.id, why: `SB ${side(d)} TP` });
       }
     }
+
+    extStep(i, b, lines);
 
     // megbízások: az FVG után mindkét irányba, a cél (az ablak nyitóvonala) két oldalán
     const act = asia || halted ? null : win || lastWin;      // az ablak után is keres, amíg a következő ablak el nem indul
