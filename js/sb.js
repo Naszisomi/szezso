@@ -2,15 +2,16 @@
 //
 // Szabályok (a megbeszéltek szerint):
 //  • Ablakok (NY idő): 03–04 (London), 10–11 (NY AM), 14–15 (NY PM).
-//  • A lényeg: az ár visszatér a kiindulóponthoz. A cél (TP) az ablak Milana-nyitóvonala:
-//    London → TLO, NY AM → NYAM, NY PM → TPM, 2 tickkel előtte.
+//  • A lényeg: az ár visszatér a kiindulóponthoz. A cél (TP) az ablak Milana-nyitásának első FVG-je (15m, ahogy a
+//    Milana rajzolja – gyakorlatilag az iFVG / abandoned baby, amit az ár céloz): London → TLO FVG, NY AM → NYAM FVG,
+//    NY PM → TPM FVG; a belépő felőli széle, 2 tickkel előtte.
 //  • Az ablak első 5m FVG-je a jel: miután kiderült, MINDKÉT irányba kerül limit megbízás –
-//    short a cél fölötti, long a cél alatti legvastagabb egyezésvonalon (n ≥ 5), az ártól legfeljebb 2,5 15m-ATR-re.
-//    Pl. nov. 27. London: short 66,65, long 65,15, mindkettő TP-je a TLO.
+//    short az FVG fölötti, long az FVG alatti legvastagabb egyezésvonalon (n ≥ 5), az ártól legfeljebb 2,5 15m-ATR-re.
+//    Pl. nov. 27. London: short 66,65, long 65,15, mindkettő TP-je a TLO FVG.
 //  • A megbízás az ablak vége után 3 óráig él (de a következő ablak kezdetekor törlődik). Ha épp nincs megfelelő vonal,
 //    addig keres, amíg az idő tart.
 //  • DCA: 3 (1/1/2/4 egység), 3 $ lépéssel. Ha a TP-ig nem jön össze, a kereskedés marad, és a következő ablak
-//    nyitóvonalához igazodik (ha az az átlagár jó oldalán van).
+//    FVG-jéhez igazodik (ha az az átlagár jó oldalán van).
 //  • Irányonként egyszerre egy silver bullet fut (egy long és egy short lehet egyszerre).
 //  • Méret: az SB számla egyenlegéből, a rácséval azonos feltétellel (50 $-os esés/emelkedés se likvidálja), díjak: limit 2 bp.
 //  • Ablakonként napló készül (mi történt / miért nem nyílt).
@@ -39,7 +40,7 @@ export function simulateSB(bars, cfg) {
     a = i < 14 ? (a * i + tr) / (i + 1) : (a * 13 + tr) / 14; atr.push(a * 1.73);
   }
   const gap = cfg.gap || 3, tick = cfg.tick || 0.001, f3 = x => +x.toFixed(3);
-  const lv = {};
+  const lv = {}, m15 = []; let c15 = null;
   let win = null, lastWin = null, id = 0;
   const live = () => trades.filter(t => t.state === "vár" || t.state === "aktív");
   const wlog = (t, msg) => { const w = logs.find(x => x.key === t.wkey); if (w) w.log.push(msg); };
@@ -57,7 +58,18 @@ export function simulateSB(bars, cfg) {
 
   for (let i = 2; i < bars.length; i++) {
     const b = bars[i], { m, wd } = nyMin(b.t);
-    for (const [k, mm, monday] of OPENS) if (m === mm && (!monday || wd === 0)) lv[k] = { open: b.o, t: b.t };
+    for (const [k, mm, monday] of OPENS) if (m === mm && (!monday || wd === 0)) lv[k] = { open: b.o, t: b.t, i15: m15.length + (c15 && c15.t !== Math.floor(b.t / 900000) * 900000 ? 1 : 0), fvg: null };
+    // 15m gyertyák az 5m-ből; a nyitások első 15m FVG-je (a Milana szerint: a nyitógyertyával kezdődő is számít)
+    const t15 = Math.floor(b.t / 900000) * 900000;
+    if (!c15 || c15.t !== t15) c15 = { t: t15, o: b.o, h: b.h, l: b.l, c: b.c }; else { c15.h = Math.max(c15.h, b.h); c15.l = Math.min(c15.l, b.l); c15.c = b.c; }
+    if (b.t + 300000 >= t15 + 900000) {
+      m15.push(c15); c15 = null;
+      const j = m15.length - 1;
+      for (const [k, v] of Object.entries(lv)) if (!v.fvg && j - 2 >= v.i15) {
+        const x = m15[j], x2 = m15[j - 2];
+        if (x.l > x2.h) v.fvg = [x2.h, x.l]; else if (x.h < x2.l) v.fvg = [x.h, x2.l];
+      }
+    }
     // ablak
     const wi = WINDOWS.findIndex(([s, e]) => m >= s && m < e), wkey = Math.floor(b.t / 86400000) * 10 + wi;
     if (wi >= 0 && (!win || win.key !== wkey)) {
@@ -96,11 +108,12 @@ export function simulateSB(bars, cfg) {
     const act = win || (lastWin && b.t < lastWin.tEnd + AFTER ? lastWin : null);
     if (!act || !act.fvg || (act.placed[1] && act.placed[-1])) continue;
     const L = lv[TARGET[act.idx]];
-    if (!L || L.t < act.t - 12 * 3600000) { if (!act.noTgt) { act.noTgt = true; act.log.push(`a cél (${TARGET[act.idx]}) még nem ismert – várakozik`); } continue; }
-    const target = L.open, lines = cfg.cfLines ? cfg.cfLines(b.t) : [];
+    if (!L || L.t < act.t - 12 * 3600000 || !L.fvg) { if (!act.noTgt) { act.noTgt = true; act.log.push(`a cél (${TARGET[act.idx]} FVG) még nem ismert – várakozik`); } continue; }
+    const [gb, gt] = L.fvg, lines = cfg.cfLines ? cfg.cfLines(b.t) : [];
+    if (!act.tgtLog) { act.tgtLog = true; act.log.push(`cél: ${TARGET[act.idx]} FVG ${f3(gb)} – ${f3(gt)}`); }
     for (const dir of [-1, 1]) {
       if (act.placed[dir]) continue;
-      const tpP = target - dir * 2 * tick, why = `${TARGET[act.idx]} ${f3(target)} (2 tickkel előtte)`;
+      const edge = dir > 0 ? gb : gt, tpP = edge - dir * 2 * tick, why = `${TARGET[act.idx]} FVG ${f3(edge)} (2 tickkel előtte)`;
       const run = live().find(t => t.dir === dir);
       if (run) {
         act.placed[dir] = true;
@@ -110,17 +123,17 @@ export function simulateSB(bars, cfg) {
         }
         continue;
       }
-      // a cél túloldalán (short: fölötte, long: alatta) a legvastagabb vonal, az ártól ≤ 2,5 ATR-re
-      const c = lines.filter(g => -dir * (g.p - target) >= 0.5 * atr[i] && -dir * (g.p - b.c) > 2 * tick && Math.abs(g.p - b.c) <= 2.5 * atr[i])
+      // az FVG túloldalán (short: fölötte, long: alatta) a legvastagabb vonal, az ártól ≤ 2,5 ATR-re
+      const c = lines.filter(g => -dir * (g.p - edge) >= 0.5 * atr[i] && -dir * (g.p - b.c) > 2 * tick && Math.abs(g.p - b.c) <= 2.5 * atr[i])
         .sort((x, y) => (y.n - x.n) || Math.abs(x.p - b.c) - Math.abs(y.p - b.c))[0];
-      if (!c) { if (!act.miss[dir]) { act.miss[dir] = true; act.log.push(`${side(dir)}: nincs vastag vonal a cél ${dir > 0 ? "alatt" : "fölött"} 2,5 ATR-en belül (ár ${f3(b.c)}) – keres tovább`); } continue; }
+      if (!c) { if (!act.miss[dir]) { act.miss[dir] = true; act.log.push(`${side(dir)}: nincs vastag vonal az FVG ${dir > 0 ? "alatt" : "fölött"} 2,5 ATR-en belül (ár ${f3(b.c)}) – keres tovább`); } continue; }
       const e = c.p, legs = [0, 1, 2, 3].map(k => ({ p: e - dir * gap * k, why: k ? "DCA" + k : `entry (EGYEZÉS ${c.n})`, units: UNITS[k] }));
       const unit = cfg.sized ? unitFor(cfg.bal || 14571, dir, legs, cfg.swan || 70) : 1;
       const t = { id: ++id, acc: "SB", dir, legs, unit, filled: 0, qty: 0, cost: 0, avg: null, open: 0, state: "vár", from: b.t, day: act.t, window: WNAME[act.idx],
         wkey: act.key, fvg: act.fvg, target: TARGET[act.idx], atr: atr[i], fills: [], exits: [], fees: 0, realized: 0, closeT: null, lastFill: -1, tpHit: [], shares: [1], tpLog: [] };
       setTp(t, tpP, why, b);
       trades.push(t); act.placed[dir] = true;
-      act.log.push(`megbízás: ${side(dir)} limit ${f3(e)} (EGYEZÉS ${c.n}) → TP ${f3(tpP)} (${TARGET[act.idx]})`);
+      act.log.push(`megbízás: ${side(dir)} limit ${f3(e)} (EGYEZÉS ${c.n}) → TP ${f3(tpP)} (${TARGET[act.idx]} FVG)`);
     }
   }
   function d0(t, p) { return t.dir * (p - t.avg) > 0; }
