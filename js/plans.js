@@ -298,6 +298,8 @@ export class PlanManager {
       }
       // korábbi napról futó kereskedésnél a múlt (teljesült lábak, elért TP-k) nem kell, csak ami még él
       if (old) for (let k = rows.length - 1; k >= 0; k--) if (rows[k].done) rows.splice(k, 1);
+      // lezárt kereskedésnél a nem teljesült lábak / el nem ért TP-k már nem élnek – ne maradjanak a charton
+      if (t.state === "lezárva") for (let k = rows.length - 1; k >= 0; k--) if (!rows[k].done) rows.splice(k, 1);
       rows.sort((x, y) => x.y - y.y);
       let lastY = null, shift = 0;
       for (const row of rows) {
