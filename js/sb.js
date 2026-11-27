@@ -1,7 +1,7 @@
 // Silver bullet kereskedés (HYPE, a 7. „SB” számlán, cross-ban, a rácstól külön) – az 5 perces gyertyákon végigjátszva.
 //
 // Szabályok (a megbeszéltek szerint):
-//  • Ablakok (NY idő): 03–04 (London), 10–11 (NY AM), 14–15 (NY PM).
+//  • Ablakok (NY idő): 03–04 (London), 08:30–09:30 (TNY), 10–11 (NY AM), 14–15 (NY PM).
 //  • A lényeg: az ár visszatér a kiindulóponthoz. A cél (TP) az ablak Milana-nyitásának első FVG-je (15m, ahogy a
 //    Milana rajzolja – gyakorlatilag az iFVG / abandoned baby, amit az ár céloz): London → TLO FVG, NY AM → NYAM FVG,
 //    NY PM → TPM FVG; a belépő felőli széle, 2 tickkel előtte.
@@ -11,25 +11,25 @@
 //  • Az ablak első 15m FVG-je a jel: miután kiderült, MINDKÉT irányba kerül limit megbízás –
 //    short az FVG fölötti, long az FVG alatti legvastagabb egyezésvonalon (n ≥ 5), az ártól legfeljebb 2,5 15m-ATR-re.
 //    Pl. nov. 27. London: short 66,65, long 65,15, mindkettő TP-je a TLO FVG.
-//  • A megbízás az ablak vége után 3 óráig él (de a következő ablak kezdetekor törlődik). Ha épp nincs megfelelő vonal,
-//    addig keres, amíg az idő tart.
+//  • A megbízás addig él, amíg egy újabb ablak ugyanabba az irányba új megbízást nem tesz, vagy Ázsia el nem kezdődik.
+//    Ha épp nincs megfelelő vonal, a következő ablak kezdetéig keres.
 //  • DCA: 3 (1/1/2/4 egység), a belépőn túli következő vastag egyezésvonalakon (nincs 3 $-os korlát; ha nincs vonal, 1 ATR).
 //    DCA után a TP: átlagár + 0,10 $ (az első visszatérésnél kiszáll). DCA nélkül a TP a következő ablak FVG-jéhez igazodik.
 //  • Ázsia (20:00–00:00 NY = 02:00–06:00 Budapest) alatt nincs új silver bullet: a kezdetekor a várakozó megbízások
 //    törlődnek; a nyitott pozíciók maradnak.
-//  • Volumendivergencia (5m vagy 15m, az utolsó 2 órában megerősített): bikás után nincs SB short, medvés után nincs SB long
-//    (a már kint lévő ilyen megbízás törlődik).
+//  • Szűrő (filters.js): a belépő nem teljesül, amíg friss volumendivergencia tiltja (bikás → short, medvés → long), kivéve,
+//    ha az ár már 1 ATR-t / a következő vastag vonalig elmozdult, vagy az RSI/KDJ jelez (C2).
 //  • Irányonként egyszerre egy silver bullet fut (egy long és egy short lehet egyszerre).
 //  • Méret: az SB számla egyenlegéből, a rácséval azonos feltétellel (50 $-os esés/emelkedés se likvidálja), díjak: limit 2 bp.
 //  • Ablakonként napló készül (mi történt / miért nem nyílt).
 import { nyOffset } from "./ind/milana.js";
 import { UNITS } from "./engine/tradeutil.js";
 import { unitFor } from "./grid.js";
-import { volDivergence } from "./engine/extra.js";
+import { makeFilter, to15 } from "./filters.js";
 
-const MAKER = 0.0002, AFTER = 3 * 3600000, ASIA = 20 * 60, BE = 0.1;
-const WINDOWS = [[180, 240], [600, 660], [840, 900]];                 // percek NY idő szerint
-const WNAME = ["London 09–10", "NY AM 16–17", "NY PM 20–21"], TARGET = ["TLO", "NYAM", "TPM"];
+const MAKER = 0.0002, ASIA = 20 * 60, BE = 0.1;
+const WINDOWS = [[180, 240], [510, 570], [600, 660], [840, 900]];                 // percek NY idő szerint
+const WNAME = ["London 09–10", "TNY 14:30–15:30", "NY AM 16–17", "NY PM 20–21"], TARGET = ["TLO", "TNY", "NYAM", "TPM"];
 const OPENS = [["TWO", 18 * 60, true], ["TDO", 0], ["TAO", 20 * 60 + 30], ["TLO", 2 * 60 + 30], ["TNY", 8 * 60 + 30], ["NYAM", 9 * 60 + 30], ["TPM", 14 * 60 + 30]];
 
 export function simulateSB(bars, cfg) {
@@ -50,13 +50,7 @@ export function simulateSB(bars, cfg) {
   const tick = cfg.tick || 0.001, f3 = x => +x.toFixed(3);
   const lv = {}, m15 = []; let c15 = null;
   // volumendivergenciák 5m-en és 15m-en, a megerősítésük (a swing után 5 gyertya) idejével
-  const agg = []; for (const b of bars) { const t = Math.floor(b.t / 900000) * 900000, x = agg[agg.length - 1];
-    if (x && x.t === t) { x.h = Math.max(x.h, b.h); x.l = Math.min(x.l, b.l); x.c = b.c; x.v += b.v || 0; } else agg.push({ t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0 }); }
-  const vdiv = [];
-  for (const [arr, ms, tf] of [[bars, 300000, "5m"], [agg, 900000, "15m"]])
-    for (const d of volDivergence(arr, 5, 100000)) if (arr[d.b + 5]) vdiv.push({ conf: arr[d.b + 5].t + ms, bear: d.bear, tf });
-  vdiv.sort((x, y) => x.conf - y.conf);
-  const vdAt = t => { let r = null; for (const d of vdiv) { if (d.conf > t) break; if (d.conf > t - 2 * 3600000) r = d; } return r; };
+  const flt = cfg.filter || makeFilter(bars, to15(bars));
   let win = null, lastWin = null, id = 0, wasAsia = false;
   const live = () => trades.filter(t => t.state === "vár" || t.state === "aktív");
   const wlog = (t, msg) => { const w = logs.find(x => x.key === t.wkey); if (w) w.log.push(msg); };
@@ -126,15 +120,15 @@ export function simulateSB(bars, cfg) {
     if (asia && !wasAsia) for (const t of live()) if (t.state === "vár") { t.state = "lejárt"; t.closeT = b.t; wlog(t, `${side(t.dir)} törölve: Ázsia kezdődik`); }
     wasAsia = asia;
 
-    const vd = vdAt(b.t + 300000), vdBlock = vd ? (vd.bear ? 1 : -1) : 0;      // 1: long tiltva, -1: short tiltva
-    for (const t of live()) if (t.state === "vár" && t.dir === vdBlock) { t.state = "lejárt"; t.closeT = b.t; wlog(t, `${side(t.dir)} törölve: ${vd.bear ? "medvés" : "bikás"} volumendivergencia (${vd.tf})`); }
+    const lines = cfg.cfLines ? cfg.cfLines(b.t) : [];
 
     // élő kereskedések: belépő/DCA-k, TP, lejárat
     for (const t of live()) {
       const d = t.dir;
-      if (t.state === "vár") {
-        const late = (win && win.key !== t.wkey) || (!win && (!lastWin || b.t >= lastWin.tEnd + AFTER));
-        if (late) { t.state = "lejárt"; t.closeT = b.t; wlog(t, `${side(d)} törölve: lejárt, nem teljesült`); continue; }
+      // a belépő nem teljesül, amíg a szűrő tiltja (volumendivergencia, RSI/KDJ nélkül)
+      if (t.state === "vár" && (d > 0 ? b.l <= t.legs[0].p : b.h >= t.legs[0].p)) {
+        const f = flt.check(b.t, d, lines);
+        if (f) { if (!t.fLog) { t.fLog = true; wlog(t, `${side(d)} belépő kivárva: ${f.why}`); } continue; }
       }
       if (t.state === "vár" && t.L) { const x = tpFor(d, t.target, t.L); if (x.p !== t.tp.p) { setTp(t, x.p, x.why, b); wlog(t, `${side(d)} TP frissítve → ${f3(x.p)} (${x.why})`); } }
       let filled = false;
@@ -151,16 +145,19 @@ export function simulateSB(bars, cfg) {
     }
 
     // megbízások: az FVG után mindkét irányba, a cél (az ablak nyitóvonala) két oldalán
-    const act = win || (lastWin && b.t < lastWin.tEnd + AFTER ? lastWin : null);
+    const act = asia ? null : win || lastWin;      // az ablak után is keres, amíg a következő ablak el nem indul
     if (!act || !act.fvg || (act.placed[1] && act.placed[-1])) continue;
     const L = lv[TARGET[act.idx]];
     if (!L || L.t < act.t - 12 * 3600000 || !L.fvg) { if (!act.noTgt) { act.noTgt = true; act.log.push(`a cél (${TARGET[act.idx]} FVG) még nem ismert – várakozik`); } continue; }
-    const [gb, gt] = L.fvg, lines = cfg.cfLines ? cfg.cfLines(b.t) : [];
+    const [gb, gt] = L.fvg;
     if (!act.tgtLog) { act.tgtLog = true; act.log.push(`cél: ${TARGET[act.idx]} FVG ${f3(gb)} – ${f3(gt)}`); }
     for (const dir of [-1, 1]) {
       if (act.placed[dir]) continue;
       const edge = dir > 0 ? gb : gt, tx = tpFor(dir, TARGET[act.idx], L), tpP = tx.p, why = tx.why;
-      const run = live().find(t => t.dir === dir);
+      let run = live().find(t => t.dir === dir);
+      if (run && run.state === "vár" && run.wkey !== act.key) {        // a korábbi ablak várakozó megbízását az új váltja
+        run.state = "lejárt"; run.closeT = b.t; wlog(run, `${side(dir)} törölve: az új ablak (${WNAME[act.idx]}) megbízása váltja`); run = null;
+      }
       if (run) {
         act.placed[dir] = true;
         if (run.wkey !== act.key) {
@@ -169,7 +166,6 @@ export function simulateSB(bars, cfg) {
         }
         continue;
       }
-      if (dir === vdBlock) { if (!act.vdLog) { act.vdLog = true; act.log.push(`${side(dir)}: nem nyit – ${vd.bear ? "medvés" : "bikás"} volumendivergencia (${vd.tf})`); } continue; }
       // az FVG túloldalán (short: fölötte, long: alatta) a legvastagabb vonal, az ártól ≤ 2,5 ATR-re
       const c = lines.filter(g => -dir * (g.p - edge) >= 0.5 * atr[i] && -dir * (g.p - b.c) > 2 * tick && Math.abs(g.p - b.c) <= 2.5 * atr[i])
         .sort((x, y) => (y.n - x.n) || Math.abs(x.p - b.c) - Math.abs(y.p - b.c))[0];

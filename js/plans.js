@@ -4,6 +4,7 @@
 // idősíkonként, napváltás, méretezés) – ez a papírkereskedés és a chart rajza is.
 // RSI-jel (70/30, választható idősíkon): nyereséges, nyitott pozíciónál „RSI ✋” a következő TP mellett.
 // A tervek a tabletre mentődnek (localStorage), a gyertyák az IndexedDB-be.
+import { makeFilter, to15 } from "./filters.js";
 import { nyToUtc, nyDate } from "./ind/milana.js";
 import { computeGaps, atr } from "./engine/gaps.js";
 import { rsi } from "./engine/osc.js";
@@ -222,9 +223,12 @@ export class PlanManager {
       if (day.short) day.short = { ...day.short, swingX: ap.long.map(a => ({ p: a.p, why: "a rajzod nyila" })) };
     }
     const bars = d.bars15.filter(b => b.t >= (days[0] ? days[0].T : Infinity));
-    const sim = simulate(days, bars, { bal: this.balances(), remMode: getPref("paper.remMode", "a"), swan: SWAN, six: hype ? 6 : null, sized: hype, minTp2: (avg, p) => hype ? 2 : Math.max(2 * ((p && p.atr) || avg * 0.004), avg * 0.004) }, Date.now());
+    // belépési szűrő (volumendivergencia 5m/15m + RSI/KDJ): a rácsra és a silver bulletre is
+    const b5 = d.bars5 ? d.bars5.filter(b => b.t >= (days[0] ? days[0].T - 86400000 : 0)) : null;
+    const filter = makeFilter(b5, b5 ? to15(b5) : d.bars15);
+    const sim = simulate(days, bars, { filter, bal: this.balances(), remMode: getPref("paper.remMode", "a"), swan: SWAN, six: hype ? 6 : null, sized: hype, minTp2: (avg, p) => hype ? 2 : Math.max(2 * ((p && p.atr) || avg * 0.004), avg * 0.004) }, Date.now());
     sim.days = days; sim.key = key; sim.hype = hype;
-    if (hype && d.bars5 && days[0]) sim.sb = simulateSB(d.bars5.filter(b => b.t >= days[0].T), { gap: 3, tick: this.insts[key].tick, sized: true, bal: this.balances()["SB"], swan: SWAN,
+    if (hype && d.bars5 && days[0]) sim.sb = simulateSB(d.bars5.filter(b => b.t >= days[0].T), { filter, tick: this.insts[key].tick, sized: true, bal: this.balances()["SB"], swan: SWAN,
       // vastag egyezésvonalak a silver bullet belépőjéhez: az adott nap tervéből (15m, 1h, 4h)
       cfLines: t => { const day = days.filter(x => x.T <= t).pop() || days[0]; return ["long", "short"].flatMap(k => day[k] && day[k].cand ? ["m15", "h1", "h4"].flatMap(f => (day[k].cand[f] && day[k].cand[f].cf) || []) : []).filter(g => g.n >= 5); } });
     this.sims.set(key, sim);

@@ -303,6 +303,12 @@ export function simulate(days, bars, cfg, now) {
       for (const t of byDir[d]) {
         if (t.state !== "vár" && t.state !== "aktív" && t.state !== "részben") continue;
         if (t.stop != null) continue;                    // pozitív stoppal védett kereskedés nem DCA-z
+        // szűrő: új belépő nem teljesül, amíg friss volumendivergencia tiltja (RSI/KDJ felülírja) – a DCA-kat nem érinti
+        if (t.state === "vár" && cfg.filter && touch(b, d, t.legs[0].p)) {
+          const lines = ["m15", "h1", "h4"].flatMap(k => (t.plan.cand && t.plan.cand[k] && t.plan.cand[k].cf) || []).filter(g => g.n >= 5);
+          const f = cfg.filter.check(b.t, d, lines);
+          if (f) { if (!t.fNote) t.fNote = { t: b.t, why: f.why }; continue; }
+        }
         while (t.filled < 4 && touch(b, d, t.legs[t.filled].p)) { fill(t, t.filled, b); ch = true; }
       }
       if (ch) {
