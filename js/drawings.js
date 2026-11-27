@@ -1,5 +1,6 @@
 // Saját rajzok a charton (1. kör): trendvonal, vízszintes vonal, vízszintes sugár, téglalap, nyíl, törött vonal (nyíllal).
-// Érintéssel: koppintás a pontokra (vagy húzás a kezdőponttól), a törött vonalnál pontonként, „Kész” / dupla koppintás zárja.
+// Rajzolás a TradingView mobil módszerével: eszközválasztás után célkereszt jelenik meg; az ujj húzása a célkeresztet
+// mozgatja (eltolva, hogy látszódjon), koppintás rakja le a pontot. A törött vonalat a „Kész” zárja, a „Mégse” elveti.
 // Kijelölés koppintással; a fogópontok és az egész rajz húzható; szín, vastagság, törlés, visszavonás, mágnes (OHLC).
 // A rajzok termékenként tárolódnak a tableten, minden idősíkon és számlafülön látszanak.
 import { getPref, setPref } from "./store.js";
@@ -10,7 +11,7 @@ const TOOLS = [
   ["rect", "▭", "Téglalap"], ["arrow", "↗", "Nyíl"], ["path", "⟋⟍", "Törött vonal nyíllal"],
 ];
 const NPTS = { trend: 2, hline: 1, ray: 1, rect: 2, arrow: 2 };
-const HIT = 16;                      // érintési tűrés (képpont)
+const HIT = 24;                      // érintési tűrés (képpont)
 
 let seq = Date.now();
 export const drawState = {
@@ -58,7 +59,7 @@ export class DrawController {
     const eat = e => { if (this.busy()) { e.stopPropagation(); e.preventDefault(); } };
     for (const n of ["touchstart", "touchmove", "touchend", "mousedown", "mousemove", "mouseup"]) el.addEventListener(n, eat, opt);
   }
-  busy() { return drawState.tool !== "select" || !!this.drag; }
+  busy() { return drawState.tool !== "select" || !!this.drag || !!this.touch; }
   lockChart(on) { this.p.chart.applyOptions({ handleScroll: !on, handleScale: !on }); }
 
   // képernyő-koordináta → {t, p}; mágnessel a gyertya OHLC-jére
@@ -115,11 +116,18 @@ export class DrawController {
     return false;
   }
 
+  // képpont → {t, p} (mágnessel)
+  tpAt(x, y) {
+    const r = this.p.el.getBoundingClientRect();
+    return this.toTP({ clientX: r.left + x, clientY: r.top + y });
+  }
+  paneSize() { const r = this.p.el.getBoundingClientRect(); return { w: r.width - 70, h: (this.p.chart.panes ? this.p.chart.panes()[0].getHeight() : r.height * 0.7) }; }
+
   down(e) {
-    const q = this.toTP(e);
-    if (!q) return;
     const tool = drawState.tool;
     if (tool === "select") {
+      const q = this.toTP(e);
+      if (!q) return;
       const h = this.hit(q.x, q.y);
       if (!h) { if (drawState.sel) { drawState.sel = null; drawState.changed(); } return; }
       e.stopPropagation(); e.preventDefault();
@@ -129,27 +137,28 @@ export class DrawController {
       this.lockChart(true); drawState.changed();
       return;
     }
+    // rajzolás: a célkereszt mozgatása / koppintás
     e.stopPropagation(); e.preventDefault();
     this.lockChart(true);
-    if (tool === "path") {
-      const now = Date.now();
-      if (!this.draft) this.draft = { id: "d" + (++seq), type: "path", color: drawState.color, width: drawState.width, pts: [{ t: q.t, p: q.p }, { t: q.t, p: q.p }] };
-      else if (now - this.lastTap < 350) { this.finish(); return; }            // dupla koppintás: kész
-      else this.draft.pts.push({ t: q.t, p: q.p });
-      this.lastTap = now; this.refresh();
-      return;
-    }
-    if (NPTS[tool] === 1) { this.draft = { id: "d" + (++seq), type: tool, color: drawState.color, width: drawState.width, pts: [{ t: q.t, p: q.p }] }; this.finish(); return; }
-    if (!this.draft) this.draft = { id: "d" + (++seq), type: tool, color: drawState.color, width: drawState.width, pts: [{ t: q.t, p: q.p }, { t: q.t, p: q.p }], downAt: q };
-    else { this.draft.pts[1] = { t: q.t, p: q.p }; this.finish(); }               // második koppintás
-    this.refresh();
+    const ps = this.paneSize();
+    if (!this.cross) this.cross = { x: ps.w * 0.55, y: ps.h * 0.45 };
+    this.touch = { fx: e.clientX, fy: e.clientY, cx: this.cross.x, cy: this.cross.y, moved: false };
+    this.showCross();
   }
   move(e) {
-    if (!this.draft && !this.drag) return;
+    if (this.touch) {
+      e.stopPropagation(); e.preventDefault();
+      const dx = e.clientX - this.touch.fx, dy = e.clientY - this.touch.fy;
+      if (Math.hypot(dx, dy) > 6) this.touch.moved = true;
+      const ps = this.paneSize();
+      this.cross = { x: Math.max(0, Math.min(ps.w, this.touch.cx + dx)), y: Math.max(0, Math.min(ps.h, this.touch.cy + dy)) };
+      this.showCross();
+      return;
+    }
+    if (!this.drag) return;
     const q = this.toTP(e);
     if (!q) return;
     e.stopPropagation(); e.preventDefault();
-    if (this.draft) { this.draft.pts[this.draft.pts.length - 1] = { t: q.t, p: q.p }; this.refresh(); return; }
     const list = loadDrawings(this.p.key), d = list.find(x => x.id === this.drag.id);
     if (!d) return;
     if (this.drag.i >= 0) d.pts[this.drag.i] = { t: q.t, p: q.p };
@@ -158,24 +167,48 @@ export class DrawController {
   }
   up(e) {
     if (this.drag) { this.drag = null; this.lockChart(false); e.stopPropagation(); return; }
-    if (this.draft && this.draft.type !== "path" && this.draft.downAt) {
-      const q = this.toTP(e);
-      // húzással rajzolt: felengedéskor kész; koppintásnál a második koppintásig várunk
-      if (q && Math.hypot(q.x - this.draft.downAt.x, q.y - this.draft.downAt.y) > 12) { this.draft.pts[1] = { t: q.t, p: q.p }; this.finish(); }
-      else delete this.draft.downAt;
-    }
+    if (!this.touch) return;
+    e.stopPropagation(); e.preventDefault();
+    const tap = !this.touch.moved;
+    this.touch = null;
+    if (tap) this.placePoint();
   }
+  // a célkereszt helyére pontot rak
+  placePoint() {
+    const q = this.cross && this.tpAt(this.cross.x, this.cross.y), tool = drawState.tool;
+    if (!q) return;
+    const pt = { t: q.t, p: q.p };
+    if (!this.draft) {
+      this.draft = { id: "d" + (++seq), type: tool, color: drawState.color, width: drawState.width, pts: [pt] };
+      if (NPTS[tool] === 1) { this.finish(); return; }
+      this.draft.pts.push({ ...pt });                       // előnézet: a következő pont a célkeresztet követi
+    } else if (tool === "path") { this.draft.pts[this.draft.pts.length - 1] = pt; this.draft.pts.push({ ...pt }); }
+    else { this.draft.pts[1] = pt; this.finish(); return; }
+    this.showCross();
+  }
+  // célkereszt (és a vázlat utolsó pontja) kirajzolása
+  showCross() {
+    const q = this.cross && this.tpAt(this.cross.x, this.cross.y);
+    if (q && this.draft) this.draft.pts[this.draft.pts.length - 1] = { t: q.t, p: q.p };
+    this.p.crossItems = q ? [
+      { type: "hline", p: q.p, color: "#555", width: 1, style: "dashed", text: fmt(q.p) },
+      { type: "vline", t: q.t, color: "#555", width: 1, style: "dashed" },
+      { type: "dot", t: q.t, p: q.p, r: 5, color: "#111", fill: "#fff" },
+    ] : [];
+    this.refresh();
+  }
+  cancel() { this.draft = null; this.cross = null; this.touch = null; this.p.crossItems = []; this.p.drawDraft = null; this.lockChart(false); this.p.drawLayer.refresh(); }
   finish() {
     const d = this.draft;
-    this.draft = null; this.lockChart(false);
-    if (!d) return;
-    if (d.type === "path") { d.pts = d.pts.filter((q, i, a) => i === 0 || q.t !== a[i - 1].t || q.p !== a[i - 1].p); if (d.pts.length < 2) return; }
+    this.draft = null; this.cross = null; this.p.crossItems = []; this.p.drawDraft = null; this.lockChart(false);
+    if (!d) { drawState.tool = "select"; drawState.changed(); return; }
+    if (d.type === "path") { d.pts.pop(); d.pts = d.pts.filter((q, i, a) => i === 0 || q.t !== a[i - 1].t || q.p !== a[i - 1].p); if (d.pts.length < 2) { drawState.tool = "select"; drawState.changed(); return; } }
     delete d.downAt;
     remember(this.p.key);
     const list = loadDrawings(this.p.key); list.push(d); saveDrawings(this.p.key, list);
     drawState.sel = { key: this.p.key, id: d.id }; drawState.tool = "select"; drawState.changed();
   }
-  refresh() { this.p.drawDraft = this.draft; this.p.layer.refresh(); drawState.changed(); }
+  refresh() { this.p.drawDraft = this.draft; this.p.drawLayer.refresh(); }
 }
 
 function segDist(x, y, a, b) {
@@ -189,8 +222,11 @@ export function buildDrawBar(box, controllers) {
   const s = drawState;
   box.innerHTML = "";
   const btn = (txt, title, on, fn, cls = "") => { const b = document.createElement("button"); b.textContent = txt; b.title = title; b.className = (on ? "on " : "") + cls; b.onclick = fn; box.appendChild(b); return b; };
-  for (const [k, ic, title] of TOOLS) btn(ic, title, s.tool === k, () => { for (const c of controllers()) { c.draft = null; c.p.drawDraft = null; } s.tool = k; s.changed(); });
-  if (s.tool === "path") btn("Kész", "A törött vonal lezárása", false, () => { for (const c of controllers()) if (c.draft) c.finish(); });
+  for (const [k, ic, title] of TOOLS) btn(ic, title, s.tool === k, () => { for (const c of controllers()) c.cancel(); s.tool = k; s.changed(); });
+  if (s.tool !== "select") {
+    btn("✓ Kész", "A rajz lezárása", false, () => { for (const c of controllers()) if (c.draft) c.finish(); s.tool = "select"; for (const c of controllers()) c.cancel(); s.changed(); }, "tog");
+    btn("✕ Mégse", "A rajzolás elvetése", false, () => { for (const c of controllers()) c.cancel(); s.tool = "select"; s.changed(); }, "tog");
+  }
   const sel = s.sel && loadDrawings(s.sel.key).find(d => d.id === s.sel.id);
   const col = document.createElement("span"); col.className = "colors";
   for (const c of COLORS) {
@@ -204,6 +240,24 @@ export function buildDrawBar(box, controllers) {
   btn("🗑", "Kijelölt rajz törlése", false, () => { if (!sel) return; remember(s.sel.key); saveDrawings(s.sel.key, loadDrawings(s.sel.key).filter(d => d.id !== sel.id)); s.sel = null; s.changed(); });
   btn("↶", "Visszavonás", false, () => { const u = s.undo.pop(); if (u) { localStorage.setItem("szezso.draw." + u.key, u.list); s.sel = null; s.changed(); } });
   btn(s.visible ? "👁" : "🚫", "Rajzok mutatása / elrejtése", false, () => { s.visible = !s.visible; setPref("draw.visible", s.visible); s.changed(); });
+  btn("📋 Rajzok", "A rajzok listája (törlés innen is)", s.list, () => { s.list = !s.list; s.changed(); });
+  if (s.list) {
+    const box2 = document.createElement("div"); box2.className = "drawlist";
+    const NAME = { trend: "trendvonal", hline: "vízsz. vonal", ray: "sugár", rect: "téglalap", arrow: "nyíl", path: "törött vonal" };
+    let any = false;
+    for (const key of ["HYPE", "BTC", "BNB"]) for (const d of loadDrawings(key)) {
+      any = true;
+      const row = document.createElement("div"), on = s.sel && s.sel.id === d.id;
+      row.innerHTML = `<span style="color:${d.color}">■</span> ${key} · ${NAME[d.type] || d.type} · ${d.pts.map(q => fmt(q.p)).join(" → ")}`;
+      row.className = on ? "on" : "";
+      row.onclick = () => { s.sel = { key, id: d.id }; s.changed(); };
+      const del = document.createElement("button"); del.textContent = "🗑";
+      del.onclick = ev => { ev.stopPropagation(); remember(key); saveDrawings(key, loadDrawings(key).filter(x => x.id !== d.id)); if (s.sel && s.sel.id === d.id) s.sel = null; s.changed(); };
+      row.appendChild(del); box2.appendChild(row);
+    }
+    if (!any) box2.textContent = "Nincs rajz.";
+    box.appendChild(box2);
+  }
   function edit(f) { remember(s.sel.key); const l = loadDrawings(s.sel.key), d = l.find(x => x.id === s.sel.id); if (d) { f(d); saveDrawings(s.sel.key, l); } }
 }
 

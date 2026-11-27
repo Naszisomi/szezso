@@ -13,7 +13,7 @@ import { saveCandles, getPref } from "./store.js";
 import { arrowPlans } from "./drawings.js";
 export { ACC_NAMES };
 
-const H = 3600000, DAY = 86400000, KEEP_DAYS = 30, TV = 5;
+const H = 3600000, DAY = 86400000, KEEP_DAYS = 30, TV = 6;
 const COL = { long: "#089981", short: "#F23645", done: "#9E9E9E", old: "#8D6E63", pos: "#2962FF" };   // long zöld, short piros, teljesült szürke, előző napi barna
 const fmtDay = new Intl.DateTimeFormat("hu-HU", { timeZone: "Europe/Budapest", month: "short", day: "numeric" });
 export const DEFAULT_BAL = Math.round(102000 / 7 * 100) / 100;   // 7 számla: Fő, Al1–Al5 (rács) és SB (silver bullet), mind cross
@@ -34,6 +34,20 @@ function slim(p) {
     o[k] = { ...p[k], levels: p[k].levels.filter(x => Math.abs(x.p - e) <= e * 0.4).sort((a, b) => Math.abs(a.p - e) - Math.abs(b.p - e)).slice(0, 150).map(x => ({ p: x.p, why: x.why })) };
   }
   return o;
+}
+
+// 4h volumenprofil legnagyobb forgalmú szintje (a gyertyák forgalma a tartományukra egyenletesen szétosztva)
+function vpoc(bars) {
+  if (bars.length < 20) return null;
+  let lo = Infinity, hi = -Infinity;
+  for (const b of bars) { lo = Math.min(lo, b.l); hi = Math.max(hi, b.h); }
+  const N = 120, step = (hi - lo) / N || 1, v = new Float64Array(N);
+  for (const b of bars) {
+    const a = Math.max(0, Math.floor((b.l - lo) / step)), z = Math.min(N - 1, Math.floor((b.h - lo) / step));
+    for (let k = a; k <= z; k++) v[k] += (b.v || 0) / (z - a + 1);
+  }
+  let m = 0; for (let k = 1; k < N; k++) if (v[k] > v[m]) m = k;
+  return lo + (m + 0.5) * step;
 }
 
 // TP-jelöltek idősíkonként a terv idejében: nyitott rések [alja, teteje] és CRT (az utolsó 3 lezárt gyertya csúcsa/alja)
@@ -93,6 +107,15 @@ export class PlanManager {
     p.cand.m15.cf = (await this.cfAt(key, d.bars15, 900, T)).cf || [];
     const i4 = await this.cfAt(key, d.bars4, 14400, T);
     p.cand.h4.cf = i4.cf || []; p.cand.h4.pat = i4.pat || [];
+    // swing-célok: 4h VPOC (30 nap), a 10/10-es golden pocket, POI (1h), az 1D legvastagabb egyezésvonala
+    const i1 = await this.cfAt(key, d.bars, 3600, T), iD = await this.cfAt(key, d.daily, 86400, T), sw = [];
+    const vp = vpoc(d.bars4.filter(x => x.t + 14400000 <= T).slice(-180));
+    if (vp != null) sw.push({ p: vp, why: "4h VPOC" });
+    for (const z of i4.gpz || []) if (z.strength >= 10) sw.push({ p: (z.upper + z.lower) / 2, why: "golden pocket 10/10" });
+    for (const q of i1.poi || []) sw.push({ p: q, why: "POI" });
+    const thick = (iD.cf || []).slice().sort((a, b) => b.n - a.n)[0];
+    if (thick) sw.push({ p: thick.p, why: `1D legvastagabb egyezés (${thick.n})` });
+    p.cand.sw = sw;
     p.cand.h1.cf = p.levels.filter(x => /^EGYEZÉS/.test(x.why || "")).map(x => { const m = /^EGYEZÉS (\d+) \((.*)\)/.exec(x.why) || []; return { p: x.p, n: +m[1] || 5, codes: (m[2] || "").split("·") }; });
     p.tick = this.insts[key].tick; p.atr = (p.tpGap || 0) * 4;
     delete p.gapTps; delete p.gapTps2; delete p.crtTps;
@@ -197,9 +220,9 @@ export class PlanManager {
       if (day.short) day.short = { ...day.short, swingX: ap.long.map(a => ({ p: a.p, why: "a rajzod nyila" })) };
     }
     const bars = d.bars15.filter(b => b.t >= (days[0] ? days[0].T : Infinity));
-    const sim = simulate(days, bars, { bal: this.balances(), lo: 10, hi: 150, sized: hype, minTp2: (avg, p) => hype ? 2 : Math.max(2 * ((p && p.atr) || avg * 0.004), avg * 0.004) }, Date.now());
+    const sim = simulate(days, bars, { bal: this.balances(), swan: 70, six: hype ? 6 : null, sized: hype, minTp2: (avg, p) => hype ? 2 : Math.max(2 * ((p && p.atr) || avg * 0.004), avg * 0.004) }, Date.now());
     sim.days = days; sim.key = key; sim.hype = hype;
-    if (hype && d.bars5 && days[0]) sim.sb = simulateSB(d.bars5.filter(b => b.t >= days[0].T), { gap: 3, tick: this.insts[key].tick, sized: true, bal: this.balances()["SB"], lo: 10, hi: 150 });
+    if (hype && d.bars5 && days[0]) sim.sb = simulateSB(d.bars5.filter(b => b.t >= days[0].T), { gap: 3, tick: this.insts[key].tick, sized: true, bal: this.balances()["SB"], swan: 70 });
     this.sims.set(key, sim);
     return sim;
   }
@@ -236,6 +259,7 @@ export class PlanManager {
       t.legs.forEach((l, i) => rows.push({ y: l.p, text: `${pre}${sd}${i ? "DCA" + i : "E"} ${f(l.p)}`, done: i < t.filled, width: i ? Math.max(1, w - 1) : w, style: i ? "dotted" : "solid" }));
       if (t.tps) t.tps.forEach((x, i) => { if (t.shares[i]) rows.push({ y: x.p, text: sb ? `${sd}TP ${f(x.p)}` : `${pre}${sd}${i < 3 ? "TP" + (i + 1) : "SWING"} ${f(x.p)} · ${Math.round(t.shares[i] * 100)}%`, done: t.tpHit.includes(i), width: Math.max(1, w - 1), style: "dashed" }); });
       if (t.stop != null) rows.push({ y: t.stop, text: `${pre}${sd}SL+ ${f(t.stop)}`, done: t.exits.some(e => e.why === "pozitív stop"), width: 1, style: "dashed", color: "#616161" });
+      if (open && t.fills.length) items.push({ type: "dot", t: t.fills[0].t, p: t.legs[0].p, r: 6, color: "#B8860B", fill: "#FFD700" });   // arany pötty: futó kereskedés entryje
       if (open && t.open > 0) {                                     // pozíció-vonal, mint a TradingView papírkereskedésénél
         const u = t.dir * (last - t.avg) * t.open;
         rows.push({ y: t.avg, text: `${sd} ${s.hype ? +t.open.toFixed(1) + " HYPE · " : ""}átl. ${f(t.avg)} · ${u >= 0 ? "+" : ""}${u.toFixed(2)}${s.hype ? " $" : ""}`, done: false, width: 1, style: "solid", color: COL.pos });

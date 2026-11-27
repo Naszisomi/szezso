@@ -10,10 +10,10 @@
 //  • TP: a kiindulópont felé eső legközelebbi Milana-szint (nyitóvonal vagy az első FVG széle, vagy maga az ablak nyitóára),
 //    egyben zárva. Ha az ablakban nem jön össze, a kereskedés marad, és a TP a következő ablak elején újraigazodik.
 //  • Ha összejön, új belépő a következő ablakban. Egyszerre egy silver bullet kereskedés fut.
-//  • Méret: az SB számla egyenlegéből, a rácséval azonos likvidációs feltétellel (10 $ / 150 $), díjak: limit 2 bp.
+//  • Méret: az SB számla egyenlegéből, a rácséval azonos feltétellel (70 $-os esés/emelkedés se likvidálja), díjak: limit 2 bp.
 import { nyOffset } from "./ind/milana.js";
 import { UNITS } from "./engine/tradeutil.js";
-import { riskPerUnit } from "./grid.js";
+import { unitFor } from "./grid.js";
 
 const MAKER = 0.0002;
 const WINDOWS = [[180, 240], [600, 660], [840, 900]];                 // percek NY idő szerint
@@ -103,7 +103,7 @@ export function simulateSB(bars, cfg) {
       if (dir) {
         const e = fvg ? (dir > 0 ? fvg[1] : fvg[0]) : (b.o + b.c) / 2;
         const legs = [0, 1, 2, 3].map(k => ({ p: e - dir * gap * k, why: k ? "DCA" + k : "entry (5m FVG)", units: UNITS[k] }));
-        const unit = cfg.sized ? Math.floor((cfg.bal || 17000) / 1.1 / riskPerUnit(dir, legs, cfg.lo, cfg.hi) * 10) / 10 : 1;
+        const unit = cfg.sized ? unitFor(cfg.bal || 14571, dir, legs, cfg.swan || 70) : 1;
         cur = { id: ++id, acc: "SB", dir, legs, unit, filled: 0, qty: 0, cost: 0, avg: null, open: 0, state: "vár", from: b.t, day: win.t, window: ["03–04", "10–11", "14–15"][win.idx],
           start: win.start, extreme: dir > 0 ? win.lo : win.hi, atr: atr[i], fills: [], exits: [], fees: 0, realized: 0, closeT: null, lastFill: -1, tpHit: [], shares: [1], tpLog: [] };
         cur.tp = tpFrom(dir, e); cur.tpLog.push({ t: b.t, p: cur.tp.p, why: cur.tp.why });

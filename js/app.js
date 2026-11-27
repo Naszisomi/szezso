@@ -388,7 +388,7 @@ class ChartPanel {
     this.layer = new SceneLayer(() => this.ds ? this.ds.bars : [], () => this.ds ? this.panelScene() : null, () => BARS[hub.tf].sec);
     this.candles.attachPrimitive(this.layer);
     // saját rajzok (külön réteg, a motor rajzai fölött)
-    this.drawLayer = new SceneLayer(() => this.ds ? this.ds.bars : [], () => ({ items: drawItems(this.key, this.drawDraft) }), () => BARS[hub.tf].sec);
+    this.drawLayer = new SceneLayer(() => this.ds ? this.ds.bars : [], () => ({ items: drawItems(this.key, this.draw && this.draw.draft).concat(this.crossItems || []) }), () => BARS[hub.tf].sec);
     this.candles.attachPrimitive(this.drawLayer);
     this.draw = new DrawController(this);
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(r => { if (r && r.from < 30 && this.ds) this.ds.loadOlder(); this.scheduleHL(); });

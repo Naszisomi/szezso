@@ -131,6 +131,8 @@ export function ctxInfo(ctx, bars) {
     voldiv: (ctx.voldiv || []).slice(-1).map(v => ({ bear: v.bear, t: bars[v.b] ? bars[v.b].t : null })),
     cf: ((ctx.cf && ctx.cf.all) || []).map(g => ({ p: g.p, n: g.n, codes: g.codes })),
     nyrev: nyReversal(ctx, bars),
+    gpz: (ctx.gpz || []).map(z => ({ upper: z.upper, lower: z.lower, strength: z.strength })),
+    poi: (ctx.poi || []).map(q => q.lvl),
     pat: ((ctx.pat && ctx.pat.chart) || []).filter(x => x.target != null && isFinite(x.target)).map(x => ({ name: x.name, dir: x.dir, target: x.target })),
   }));
 }
