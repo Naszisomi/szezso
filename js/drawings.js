@@ -16,7 +16,7 @@ const HIT = 24;                      // érintési tűrés (képpont)
 
 let seq = Date.now();
 export const drawState = {
-  tool: "select", color: COLORS[0], width: 2, magnet: getPref("draw.magnet", true), visible: getPref("draw.visible", true),
+  tool: "select", color: COLORS[0], width: 2, magnet: getPref("draw.magnet", true), visible: getPref("draw.visible", true), locked: getPref("draw.locked", true),
   sel: null, undo: [], listeners: new Set(),
   changed() { for (const f of this.listeners) f(); },
 };
@@ -50,9 +50,11 @@ const fmt = p => String(+(+p).toPrecision(6));
 export class DrawController {
   // panel: ChartPanel (chart, candles, layer, el, key, ds)
   constructor(panel) {
-    this.p = panel; this.draft = null; this.drag = null; this.lastTap = 0;
+    this.p = panel; this.draft = null; this.drag = null; this.lastTap = 0; this.ptrs = new Set();
     const el = panel.el, opt = { capture: true, passive: false };
-    el.addEventListener("pointerdown", e => this.down(e), opt);
+    // két ujj (nagyítás) soha nem mozdít rajzot: a második ujjra a húzás visszaáll
+    el.addEventListener("pointerdown", e => { this.ptrs.add(e.pointerId); if (this.ptrs.size > 1) { this.abortDrag(); return; } this.down(e); }, opt);
+    for (const n of ["pointerup", "pointercancel", "pointerleave"]) el.addEventListener(n, e => this.ptrs.delete(e.pointerId), { capture: true });
     el.addEventListener("pointermove", e => this.move(e), opt);
     el.addEventListener("pointerup", e => this.up(e), opt);
     el.addEventListener("pointercancel", () => { this.drag = null; this.lockChart(false); }, opt);
@@ -131,9 +133,11 @@ export class DrawController {
       if (!q) return;
       const h = this.hit(q.x, q.y);
       if (!h) { if (drawState.sel) { drawState.sel = null; drawState.changed(); } return; }
+      drawState.sel = { key: this.p.key, id: h.d.id };
+      // zárolt rajz (alapból mind): kijelölhető (szín, törlés), de nem mozdul – a chart szabadon görgethető, nagyítható
+      if (drawState.locked || h.d.locked) { drawState.changed(); return; }
       e.stopPropagation(); e.preventDefault();
       remember(this.p.key);
-      drawState.sel = { key: this.p.key, id: h.d.id };
       this.drag = { id: h.d.id, i: h.i, start: q, orig: JSON.parse(JSON.stringify(h.d.pts)) };
       this.lockChart(true); drawState.changed();
       return;
@@ -165,6 +169,12 @@ export class DrawController {
     if (this.drag.i >= 0) d.pts[this.drag.i] = { t: q.t, p: q.p };
     else { const dt = q.t - this.drag.start.t, dp = q.p - this.drag.start.p; d.pts = this.drag.orig.map(o => ({ t: o.t + dt, p: o.p + dp })); }
     saveDrawings(this.p.key, list); drawState.changed();
+  }
+  abortDrag() {
+    if (!this.drag) return;
+    const list = loadDrawings(this.p.key), d = list.find(x => x.id === this.drag.id);
+    if (d) { d.pts = this.drag.orig; saveDrawings(this.p.key, list); }
+    this.drag = null; this.lockChart(false); drawState.changed();
   }
   up(e) {
     if (this.drag) { this.drag = null; this.lockChart(false); e.stopPropagation(); return; }
@@ -243,6 +253,7 @@ export function buildDrawBar(box, controllers) {
   }
   box.appendChild(col);
   btn("≡" + (sel ? sel.width : s.width), "Vastagság", false, () => { const w = ((sel ? sel.width : s.width) % 4) + 1; s.width = w; if (sel) edit(x => x.width = w); s.changed(); });
+  btn(s.locked ? "🔒" : "🔓", s.locked ? "A rajzok zárolva (nem mozdulnak) – koppints a szerkesztéshez" : "A rajzok szerkeszthetők – koppints a zároláshoz", s.locked, () => { s.locked = !s.locked; setPref("draw.locked", s.locked); s.changed(); });
   btn("🧲", "Mágnes (OHLC)", s.magnet, () => { s.magnet = !s.magnet; setPref("draw.magnet", s.magnet); s.changed(); });
   btn("🗑", "Kijelölt rajz törlése", false, () => { if (!sel) return; remember(s.sel.key); saveDrawings(s.sel.key, loadDrawings(s.sel.key).filter(d => d.id !== sel.id)); s.sel = null; s.changed(); });
   btn("↶", "Visszavonás", false, () => { const u = s.undo.pop(); if (u) { localStorage.setItem("szezso.draw." + u.key, u.list); s.sel = null; s.changed(); } });
