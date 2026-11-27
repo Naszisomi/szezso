@@ -1,6 +1,6 @@
 // EGYEZÉS: kék vonal ott, ahol legalább `min` KÜLÖNBÖZŐ tényező esik egy árra (tűrésen belül).
 // Vastagság: 5 tényező = 1, 6 = 2, … A vonal bal felén 10-es betűvel, rövidítve az okok.
-// Tényezőkódok: KZ killzone-doboz széle/közepe · MIL Milana-nyitás/első FVG · DWM előző nap/hét/hónap H-L-M, nyitók ·
+// Tényezőkódok: KZ killzone-doboz széle/közepe · MIL Milana-nyitás/első FVG · DWM előző nap/hét/hónap H-L-M, nyitók, heti/havi zárás ·
 // 1h/4h/D kanócvég · FIB (Auto Fib + DGT) · GP golden pocket · GY gyakori ár · PD prémium/diszkont · FVG (OB+VFVG) ·
 // LIQ likviditás · EW Elliott · OTE · POI · GAP rés · VP VPOC/VAH/VAL · AMS · EMA (napi és saját EMA/SMA) ·
 // ST Supertrend · GANN doboz/legyező · TGIF · WY Wyckoff · MINTA (chart/harmonikus) · IDŐ (Gann-időablak most).

@@ -104,6 +104,11 @@ function dwmLevels(daily, now) {
   const dOpen = daily.find(x => x.t === dayS), wOpen = daily.find(x => x.t === wkS);
   if (dOpen) out.push(dOpen.o);
   if (wOpen) out.push(wOpen.o);
+  // heti és havi zárás: az előző hét / hónap utolsó napi záróára (a kriptónál a hétvége is számít)
+  const lastBefore = T => { let r = null; for (const x of daily) if (x.t < T && (!r || x.t > r.t)) r = x; return r; };
+  const wClose = lastBefore(wkS), mClose = lastBefore(moS);
+  if (wClose) out.push(wClose.c);
+  if (mClose) out.push(mClose.c);
   return out;
 }
 
