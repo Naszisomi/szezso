@@ -5,13 +5,17 @@
 //  • Minden nap az Ázsia végén (00:00 NY) az aznapi terv a rács alapja (Ázsia alja / teteje). Ugyanazon a szinten nem lehet
 //    két aktív kereskedés. 6 $-os szabály: ha az Ázsia végi ár legalább 6 $-ra van a legtávolabbi futó entrytől, az a
 //    kereskedés az árhoz legközelebbi láncszem, új rács-entry csak azon túl nyílik (a köztes zónát a silver bullet viszi).
-//  • Szerepek az egy oldalon nyitott összes kereskedés (minden alszámla) entryje szerint:
-//      1 fut → swing;  2 fut → a közelebbi 60/25/15% TP1/TP2/TP3 + pozitív stop, a távolabbi swing;
-//      2-nél több → a legközelebbi TP1-nél egyben zár, a középsők 60/25/15% + pozitív stop, a legtávolabbi swing.
+//  • Szerepek az egy oldalon nyitott összes kereskedés (minden alszámla, a részben zártak is) entryje szerint:
+//      1 fut → swing;  2 vagy több → az árhoz legközelebbi TP1-nél egyben zár (ha már részben zárt, a maradéka
+//      az átlagárából újraszámolt TP1-nél), a középsők 60/25/15% + pozitív stop, a legtávolabbi swing.
+//  • A részben zárt (stop nélküli) kereskedés DCA-ja is teljesül; a maradék kiegészítése választható:
+//      a) az első DCA az eredeti entry + DCA1 méretére egészít ki; b) az eredeti entry méretére;
+//      c) a maradék méretével indul; utána mindhárom a szokásos duplázással (minden DCA = a nyitott méret).
 //    A swing (a legtávolabbi entry) 60% TP1, 25% TP2, 15% a swing-célnál, stop nélkül, a DCA-i megmaradnak.
 //  • TP1 a 15m (legalább 1 $-ra az átlagártól), TP2 az 1h (legalább 2 $; a 15m rés pontosítja), TP3 a 4h;
 //    swing-cél: 4h VPOC, 10/10-es golden pocket, POI, az 1D legvastagabb egyezésvonala, minták és a rajzolt nyilak.
-//  • Jelzésre zárás (15m gyertyazáráskor, legalább 1 $ nyereségnél): a soron következő TP-részlet (a swing-cél kivételével) azonnal zár, ha
+//  • Jelzésre zárás (15m gyertyazáráskor, legalább 1 $ nyereségnél, és ha az ár már legalább félúton van a TP felé):
+//    a soron következő TP-részlet (a swing-cél kivételével) azonnal zár, ha
 //    abandoned baby van, vagy legalább kettő a többiből: RSI 70/30, vastag egyezésvonal, Milana-szint (silver bullet cél),
 //    EMA 50/100/200 érintése, fordulóminta (esti/hajnalcsillag, akasztott ember / kalapács, hullócsillag, három varjú /
 //    katona, bekebelezés, doji a szélsőértéken).
@@ -166,7 +170,14 @@ export function simulate(days, bars, cfg, now) {
   const touch = (b, d, x) => d > 0 ? b.l <= x : b.h >= x, reach = (b, d, x) => d > 0 ? b.h >= x : b.l <= x;
 
   const fill = (t, k, b) => {
-    const l = t.legs[k], q = l.units * t.unit;
+    const l = t.legs[k], first = t.exits.length && !t.remDca;
+    let q = l.units * t.unit;
+    if (t.exits.length) {                                // részben zárt kereskedés DCA-ja: a maradékhoz igazítva
+      const m = cfg.remMode || "a";
+      q = first ? (m === "a" ? Math.max(0, 2 * t.unit - t.open) : m === "b" ? Math.max(0, t.unit - t.open) : t.open) : t.open;
+      if (first) t.remDca = true;
+      if (q <= 0) q = t.open;
+    }
     t.qty += q; t.open += q; t.cost += q * l.p; t.avg = t.cost / t.qty; t.filled = k + 1; t.lastFill = b.t;
     const fee = q * l.p * MAKER;
     t.fees += fee; t.fills.push({ t: b.t, p: l.p, qty: q, why: k ? "DCA" + k : "entry", fee });
@@ -189,10 +200,15 @@ export function simulate(days, bars, cfg, now) {
     let prev = null;
     list.forEach(t => {
       const k = all.indexOf(t);
-      t.role = n === 1 || k === n - 1 ? "swing" : n > 2 && k === 0 ? "full" : "split";
+      t.role = n === 1 || k === n - 1 ? "swing" : k === 0 ? "full" : "split";
       t.tps = tpSet(t.plan, t.avg, prev ? prev.tps[0].p : null, cfg.minTp2(t.avg, t.plan)); t.shares = SHARES[t.role];
       prev = t;
     });
+    // a részben zárt, árhoz legközelebbi kereskedés (ha több fut): a maradék az átlagárából újraszámolt TP1-nél egyben zár
+    const near = all[0];
+    if (n >= 2 && near && near.exits.length && near.role !== "full" && near.stop == null) {
+      near.role = "full"; near.tps = tpSet(near.plan, near.avg, null, cfg.minTp2(near.avg, near.plan)); near.tpHit = []; near.shares = SHARES.full;
+    }
     for (const t of byDir[d]) if (t.lock && t.state === "aktív") t.tps = tpSet(t.plan, t.avg, null, cfg.minTp2(t.avg, t.plan));
     for (const t of byDir[d]) if (t.state === "vár") { t.tps = tpSet(t.plan, t.legs[0].p, null, cfg.minTp2(t.legs[0].p, t.plan)); t.shares = SHARES.split; }
   };
@@ -254,8 +270,8 @@ export function simulate(days, bars, cfg, now) {
     if (pats.includes("abandoned baby")) return "abandoned baby";
     if (d > 0 ? sig.rsi[i] >= 70 : sig.rsi[i] <= 30) got.push(`RSI ${Math.round(sig.rsi[i])}`);
     const p = t.plan, tol = b.c * 0.001, inBar = x => x >= b.l - tol && x <= b.h + tol && d * (x - t.avg) > 0;
-    const cfs = ["m15", "h1", "h4"].flatMap(k => (p.cand && p.cand[k] && p.cand[k].cf) || []).filter(g => g.n >= 5);
-    if (cfs.some(g => inBar(g.p))) got.push("egyezésvonal");
+    const cfs = ["m15", "h1", "h4"].flatMap(k => (p.cand && p.cand[k] && p.cand[k].cf) || []).filter(g => g.n >= 6 || strongCf(g));   // vastag vonal
+    if (cfs.some(g => inBar(g.p))) got.push("vastag egyezésvonal");
     if (p.levels.some(x => /^(TLO|TNY|NYAM|TPM|TDO|TAO|TWO)$|^Milana/.test(x.why || "") && inBar(x.p))) got.push("Milana-szint");
     if (sig.ema.some(e => inBar(e[i]))) got.push("EMA");
     if (pats.length) got.push(pats[0]);
@@ -285,11 +301,16 @@ export function simulate(days, bars, cfg, now) {
     for (const d of [1, -1]) {
       let ch = false;
       for (const t of byDir[d]) {
-        if (t.state !== "vár" && t.state !== "aktív") continue;
-        if (t.stop != null || t.exits.length) continue;
+        if (t.state !== "vár" && t.state !== "aktív" && t.state !== "részben") continue;
+        if (t.stop != null) continue;                    // pozitív stoppal védett kereskedés nem DCA-z
         while (t.filled < 4 && touch(b, d, t.legs[t.filled].p)) { fill(t, t.filled, b); ch = true; }
       }
-      if (ch) rank(d);
+      if (ch) {
+        for (const t of byDir[d]) if (t.lastFill === b.t && t.exits.length && t.stop == null) {   // maradék + DCA: új átlagár, új TP-k
+          t.tps = tpSet(t.plan, t.avg, null, cfg.minTp2(t.avg, t.plan)); t.tpHit = []; t.shares = SHARES[t.role === "full" ? "full" : t.role || "split"];
+        }
+        rank(d);
+      }
       let re = false;
       for (const t of byDir[d]) {
         if (!isOpen(t) || t.lastFill === b.t) continue;
@@ -307,7 +328,8 @@ export function simulate(days, bars, cfg, now) {
         // jelzésre zárás a gyertya záróárán: a soron következő TP-részlet
         if (isOpen(t) && t.tps && d * (b.c - t.avg) >= cfg.minTp2(t.avg, t.plan) / 2) {
           const k = [0, 1, 2].find(j => t.shares[j] && !t.tpHit.includes(j));   // a swing-cél (15%) nem zár jelzésre, fut a célig
-          const why = k == null ? null : exitSignal(t, b, i, d);
+          const half = k != null && d * (b.c - t.avg) >= 0.5 * d * (t.tps[k].p - t.avg);   // csak ha már félúton van a TP felé
+          const why = k == null || !half ? null : exitSignal(t, b, i, d);
           if (why) {
             t.tpHit.push(k); re = true;
             const lastTp = !t.shares.slice(k + 1).some(x => x);

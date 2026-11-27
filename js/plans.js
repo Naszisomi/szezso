@@ -220,9 +220,11 @@ export class PlanManager {
       if (day.short) day.short = { ...day.short, swingX: ap.long.map(a => ({ p: a.p, why: "a rajzod nyila" })) };
     }
     const bars = d.bars15.filter(b => b.t >= (days[0] ? days[0].T : Infinity));
-    const sim = simulate(days, bars, { bal: this.balances(), swan: 70, six: hype ? 6 : null, sized: hype, minTp2: (avg, p) => hype ? 2 : Math.max(2 * ((p && p.atr) || avg * 0.004), avg * 0.004) }, Date.now());
+    const sim = simulate(days, bars, { bal: this.balances(), remMode: getPref("paper.remMode", "a"), swan: 70, six: hype ? 6 : null, sized: hype, minTp2: (avg, p) => hype ? 2 : Math.max(2 * ((p && p.atr) || avg * 0.004), avg * 0.004) }, Date.now());
     sim.days = days; sim.key = key; sim.hype = hype;
-    if (hype && d.bars5 && days[0]) sim.sb = simulateSB(d.bars5.filter(b => b.t >= days[0].T), { gap: 3, tick: this.insts[key].tick, sized: true, bal: this.balances()["SB"], swan: 70 });
+    if (hype && d.bars5 && days[0]) sim.sb = simulateSB(d.bars5.filter(b => b.t >= days[0].T), { gap: 3, tick: this.insts[key].tick, sized: true, bal: this.balances()["SB"], swan: 70,
+      // vastag egyezésvonalak a silver bullet belépőjéhez: az adott nap tervéből (15m, 1h, 4h)
+      cfLines: t => { const day = days.filter(x => x.T <= t).pop() || days[0]; return ["long", "short"].flatMap(k => day[k] && day[k].cand ? ["m15", "h1", "h4"].flatMap(f => (day[k].cand[f] && day[k].cand[f].cf) || []) : []).filter(g => g.n >= 5); } });
     this.sims.set(key, sim);
     return sim;
   }
@@ -259,7 +261,7 @@ export class PlanManager {
       t.legs.forEach((l, i) => rows.push({ y: l.p, text: `${pre}${sd}${i ? "DCA" + i : "E"} ${f(l.p)}`, done: i < t.filled, width: i ? Math.max(1, w - 1) : w, style: i ? "dotted" : "solid" }));
       if (t.tps) t.tps.forEach((x, i) => { if (t.shares[i]) rows.push({ y: x.p, text: sb ? `${sd}TP ${f(x.p)}` : `${pre}${sd}${i < 3 ? "TP" + (i + 1) : "SWING"} ${f(x.p)} · ${Math.round(t.shares[i] * 100)}%`, done: t.tpHit.includes(i), width: Math.max(1, w - 1), style: "dashed" }); });
       if (t.stop != null) rows.push({ y: t.stop, text: `${pre}${sd}SL+ ${f(t.stop)}`, done: t.exits.some(e => e.why === "pozitív stop"), width: 1, style: "dashed", color: "#616161" });
-      if (open && t.fills.length) items.push({ type: "dot", t: t.fills[0].t, p: t.legs[0].p, r: 6, color: "#B8860B", fill: "#FFD700" });   // arany pötty: futó kereskedés entryje
+      if (open && t.fills.length) items.push({ type: "dot", t: Math.max(t.fills[0].t, t1), p: t.legs[0].p, r: 7, color: "#B8860B", fill: "#FFD700" });   // arany pötty: futó kereskedés entryje (a látható szakaszon)
       if (open && t.open > 0) {                                     // pozíció-vonal, mint a TradingView papírkereskedésénél
         const u = t.dir * (last - t.avg) * t.open;
         rows.push({ y: t.avg, text: `${sd} ${s.hype ? +t.open.toFixed(1) + " HYPE · " : ""}átl. ${f(t.avg)} · ${u >= 0 ? "+" : ""}${u.toFixed(2)}${s.hype ? " $" : ""}`, done: false, width: 1, style: "solid", color: COL.pos });
@@ -268,6 +270,8 @@ export class PlanManager {
         const k = [0, 1, 2, 3].find(i => t.shares[i] && !t.tpHit.includes(i));
         if (k != null) rows.push({ y: t.tps[k].p, text: `RSI ${Math.round(rsiFlag.v)} ✋ (${rsiFlag.tf})`, done: false, width: 0, style: "solid", color: "#6A1B9A", noLine: true });
       }
+      // korábbi napról futó kereskedésnél a múlt (teljesült lábak, elért TP-k) nem kell, csak ami még él
+      if (old) for (let k = rows.length - 1; k >= 0; k--) if (rows[k].done) rows.splice(k, 1);
       rows.sort((x, y) => x.y - y.y);
       let lastY = null, shift = 0;
       for (const row of rows) {
