@@ -28,9 +28,7 @@ export function renderPaper(el, plans, key, rerender) {
   o.push(`<h2>Papírkereskedés – HYPE</h2><p class="muted">A rendszer szabályai szerint, automatikusan (a 15 perces gyertyákon végigjátszva). Kezdés: ${sim.days[0] ? fmtT.format(sim.days[0].T) : "–"}.</p>`);
   // a rács és a silver bullet külön: így a rácsos kereskedés statisztikája tiszta marad
   o.push(`<div class="ptabs"><button data-mode="all" class="${all ? "on" : ""}">Összesen (rács + SB)</button><button data-mode="grid" class="${mode === "grid" ? "on" : ""}">Rács (cross)</button><button data-mode="sb" class="${sb ? "on" : ""}">Silver bullet (SB számla)</button></div>`);
-  if (sb) o.push(`<p class="muted">A 7. („SB”) számlán, cross-ban. Ablakok (NY): 03–04, 10–11, 14–15 (Budapest: 09–10, 16–17, 20–21). A lényeg: az ár visszatér a kiindulóponthoz – a cél (TP) az ablak Milana-nyitásának 15m FVG-je, a belépő felőli szélén (London → TLO FVG, NY AM → NYAM FVG, NY PM → TPM FVG); ha az FVG-n belül még ki nem töltött rés van (iFVG / abandoned baby), annak túlsó széle. Az ablak első 15m FVG-je után mindkét irányba kerül limit: short az FVG fölötti, long az FVG alatti legvastagabb egyezésvonalon (≤ 2,5 ATR). 3 DCA a következő vastag vonalakon; DCA után a TP az átlagár + 0,10 $. A megbízás az ablak után 3 óráig él. Ázsia (02:00–06:00) alatt nincs SB: a megbízások törlődnek, a nyitott pozíciók zárnak.</p>`);
-  if (sb && sbs.windows && sbs.windows.length) o.push(`<details open><summary>Ablaknapló (miért nyílt / miért nem)</summary><ul>${sbs.windows.slice().reverse().map(w => `<li><b>${fmtT.format(w.t)} (${w.window})</b>: ${w.log.map(esc).join(" · ") || "–"}</li>`).join("")}</ul></details>`);
-  else if (!all) o.push(`<div class="ptabs">${["Összes", ...ACC_NAMES].map(a => `<button data-acc="${a}" class="${a === acc ? "on" : ""}">${a}</button>`).join("")}</div>`);
+  if (!sb && !all) o.push(`<div class="ptabs">${["Összes", ...ACC_NAMES].map(a => `<button data-acc="${a}" class="${a === acc ? "on" : ""}">${a}</button>`).join("")}</div>`);
   o.push(`<div class="cards">` + [
     ["Egyenleg", usd(start + realized, false)], ["Saját tőke (equity)", usd(start + realized + unreal, false)],
     ["Nem realizált PnL", `<span class="${cls(unreal)}">${usd(unreal)}</span>`], ["Realizált PnL", `<span class="${cls(realized)}">${usd(realized)}</span>`],
@@ -127,7 +125,7 @@ function exportAll(plans) {
       days: st.days,
       trades: s ? s.trades.map(t => { const { plan, ...rest } = t; return { ...rest, planDay: t.day, planDir: plan.dir }; }) : [],
       events: s ? s.events : [],
-      silverBullet: s && s.sb ? { trades: s.sb.trades, events: s.sb.events } : null,
+      silverBullet: s && s.sb ? { trades: s.sb.trades.map(({ L, ...t }) => t), events: s.sb.events, windows: s.sb.windows } : null,
       last: s && s.last,
       drawings: (() => { try { return JSON.parse(localStorage.getItem("szezso.draw." + key)) || []; } catch { return []; } })(),
     };

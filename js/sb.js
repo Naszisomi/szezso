@@ -15,18 +15,21 @@
 //    addig keres, amíg az idő tart.
 //  • DCA: 3 (1/1/2/4 egység), a belépőn túli következő vastag egyezésvonalakon (nincs 3 $-os korlát; ha nincs vonal, 1 ATR).
 //    DCA után a TP: átlagár + 0,10 $ (az első visszatérésnél kiszáll). DCA nélkül a TP a következő ablak FVG-jéhez igazodik.
-//  • Ázsia (20:00–00:00 NY = 02:00–06:00 Budapest) alatt nincs silver bullet: a kezdetekor a megbízások törlődnek,
-//    a nyitott pozíciók piaci áron zárnak.
+//  • Ázsia (20:00–00:00 NY = 02:00–06:00 Budapest) alatt nincs új silver bullet: a kezdetekor a várakozó megbízások
+//    törlődnek; a nyitott pozíciók maradnak.
+//  • Volumendivergencia (5m vagy 15m, az utolsó 2 órában megerősített): bikás után nincs SB short, medvés után nincs SB long
+//    (a már kint lévő ilyen megbízás törlődik).
 //  • Irányonként egyszerre egy silver bullet fut (egy long és egy short lehet egyszerre).
 //  • Méret: az SB számla egyenlegéből, a rácséval azonos feltétellel (50 $-os esés/emelkedés se likvidálja), díjak: limit 2 bp.
 //  • Ablakonként napló készül (mi történt / miért nem nyílt).
 import { nyOffset } from "./ind/milana.js";
 import { UNITS } from "./engine/tradeutil.js";
 import { unitFor } from "./grid.js";
+import { volDivergence } from "./engine/extra.js";
 
-const MAKER = 0.0002, TAKER = 0.0005, AFTER = 3 * 3600000, ASIA = 20 * 60, BE = 0.1;
+const MAKER = 0.0002, AFTER = 3 * 3600000, ASIA = 20 * 60, BE = 0.1;
 const WINDOWS = [[180, 240], [600, 660], [840, 900]];                 // percek NY idő szerint
-const WNAME = ["03–04", "10–11", "14–15"], TARGET = ["TLO", "NYAM", "TPM"];
+const WNAME = ["London 09–10", "NY AM 16–17", "NY PM 20–21"], TARGET = ["TLO", "NYAM", "TPM"];
 const OPENS = [["TWO", 18 * 60, true], ["TDO", 0], ["TAO", 20 * 60 + 30], ["TLO", 2 * 60 + 30], ["TNY", 8 * 60 + 30], ["NYAM", 9 * 60 + 30], ["TPM", 14 * 60 + 30]];
 
 export function simulateSB(bars, cfg) {
@@ -46,6 +49,14 @@ export function simulateSB(bars, cfg) {
   }
   const tick = cfg.tick || 0.001, f3 = x => +x.toFixed(3);
   const lv = {}, m15 = []; let c15 = null;
+  // volumendivergenciák 5m-en és 15m-en, a megerősítésük (a swing után 5 gyertya) idejével
+  const agg = []; for (const b of bars) { const t = Math.floor(b.t / 900000) * 900000, x = agg[agg.length - 1];
+    if (x && x.t === t) { x.h = Math.max(x.h, b.h); x.l = Math.min(x.l, b.l); x.c = b.c; x.v += b.v || 0; } else agg.push({ t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0 }); }
+  const vdiv = [];
+  for (const [arr, ms, tf] of [[bars, 300000, "5m"], [agg, 900000, "15m"]])
+    for (const d of volDivergence(arr, 5, 100000)) if (arr[d.b + 5]) vdiv.push({ conf: arr[d.b + 5].t + ms, bear: d.bear, tf });
+  vdiv.sort((x, y) => x.conf - y.conf);
+  const vdAt = t => { let r = null; for (const d of vdiv) { if (d.conf > t) break; if (d.conf > t - 2 * 3600000) r = d; } return r; };
   let win = null, lastWin = null, id = 0, wasAsia = false;
   const live = () => trades.filter(t => t.state === "vár" || t.state === "aktív");
   const wlog = (t, msg) => { const w = logs.find(x => x.key === t.wkey); if (w) w.log.push(msg); };
@@ -91,7 +102,7 @@ export function simulateSB(bars, cfg) {
     if (b.t + 300000 >= t15 + 900000) {
       m15.push(c15); c15 = null;
       const j = m15.length - 1;
-      for (const [k, v] of Object.entries(lv)) if (!v.fvg && j - 2 >= v.i15) {
+      for (const [k, v] of Object.entries(lv)) if (!v.fvg && j - 2 > v.i15) {
         const x = m15[j], x2 = m15[j - 2];
         if (x.l > x2.h) v.fvg = [x2.h, x.l]; else if (x.h < x2.l) v.fvg = [x.h, x2.l];
         if (v.fvg) v.j = j;
@@ -110,17 +121,13 @@ export function simulateSB(bars, cfg) {
       logs.push(win);
     } else if (win && wi < 0) { win.tEnd = b.t; lastWin = win; win = null; }
 
-    // Ázsia (20:00–00:00 NY) alatt nincs silver bullet: a kezdetén a megbízások törlődnek, a nyitott pozíciók piaci áron zárnak
+    // Ázsia (20:00–00:00 NY) alatt nincs új silver bullet: a kezdetén a várakozó megbízások törlődnek (a nyitott pozíciók maradnak)
     const asia = m >= ASIA;
-    if (asia && !wasAsia) for (const t of live()) {
-      if (t.state === "vár") { t.state = "lejárt"; t.closeT = b.t; wlog(t, `${side(t.dir)} törölve: Ázsia kezdődik`); continue; }
-      const px = b.o, q = t.open, fee = q * px * TAKER, pnl = t.dir * (px - t.avg) * q;
-      t.open = 0; t.fees += fee; t.realized += pnl; t.exits.push({ t: b.t, p: px, qty: q, why: "Ázsia előtti zárás", pnl, fee });
-      t.state = "lezárva"; t.closeT = b.t;
-      wlog(t, `${side(t.dir)} Ázsia előtt zárva piaci áron ${f3(px)}: ${pnl - fee >= 0 ? "+" : ""}${(pnl - fee).toFixed(2)} $`);
-      events.push({ t: b.t, acc: "SB", pnl: pnl - fee, trade: t.id, why: `SB ${side(t.dir)} zárás Ázsia előtt` });
-    }
+    if (asia && !wasAsia) for (const t of live()) if (t.state === "vár") { t.state = "lejárt"; t.closeT = b.t; wlog(t, `${side(t.dir)} törölve: Ázsia kezdődik`); }
     wasAsia = asia;
+
+    const vd = vdAt(b.t + 300000), vdBlock = vd ? (vd.bear ? 1 : -1) : 0;      // 1: long tiltva, -1: short tiltva
+    for (const t of live()) if (t.state === "vár" && t.dir === vdBlock) { t.state = "lejárt"; t.closeT = b.t; wlog(t, `${side(t.dir)} törölve: ${vd.bear ? "medvés" : "bikás"} volumendivergencia (${vd.tf})`); }
 
     // élő kereskedések: belépő/DCA-k, TP, lejárat
     for (const t of live()) {
@@ -162,6 +169,7 @@ export function simulateSB(bars, cfg) {
         }
         continue;
       }
+      if (dir === vdBlock) { if (!act.vdLog) { act.vdLog = true; act.log.push(`${side(dir)}: nem nyit – ${vd.bear ? "medvés" : "bikás"} volumendivergencia (${vd.tf})`); } continue; }
       // az FVG túloldalán (short: fölötte, long: alatta) a legvastagabb vonal, az ártól ≤ 2,5 ATR-re
       const c = lines.filter(g => -dir * (g.p - edge) >= 0.5 * atr[i] && -dir * (g.p - b.c) > 2 * tick && Math.abs(g.p - b.c) <= 2.5 * atr[i])
         .sort((x, y) => (y.n - x.n) || Math.abs(x.p - b.c) - Math.abs(y.p - b.c))[0];

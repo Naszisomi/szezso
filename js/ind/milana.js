@@ -2,7 +2,7 @@
 // A TradingView-on futó "milána" Pine Script (a jobban egyező, első verzió) átirata.
 //  - 7 nyitás (NY idő): TWO hétfő 18:00, TDO 00:00, TAO 20:30, TLO 02:30,
 //    TNY 08:30, NYAM 09:30, TPM 14:30
-//  - minden nyitás után az első FVG (a nyitógyertyával kezdődő is számít)
+//  - minden nyitás után az első FVG (az első gyertyája a nyitógyertya utáni – mint a TradingView-on)
 //  - az előző vonal / FVG a következő ugyanilyen nyitásnál ér véget
 //  - 30m-ig minden nyitás, 1h-n TDO + TWO, 4h-n TDO (felirattal), napi charton semmi
 import { rgba } from "../draw.js";
@@ -122,7 +122,7 @@ export function milana(bars, barSec, cfg = MILANA_DEFAULTS) {
       if (!o.fvg) return;
       // első FVG: a nyitás után, a következő nyitásig, csak lezárt gyertyákon
       const stop = isCur ? last : hits[k + 1] - 1;
-      for (let j = s + 2; j <= stop; j++) {
+      for (let j = s + 3; j <= stop; j++) {          // a Pine szerint: az FVG első gyertyája a nyitógyertya UTÁN (bar_index - 2 > start)
         const b = bars[j];
         if (j === last && !b.done) break;
         const b2 = bars[j - 2];
