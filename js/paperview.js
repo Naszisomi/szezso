@@ -35,7 +35,7 @@ export function renderPaper(el, plans, key, rerender) {
   o.push(`<p style="float:right"><button data-export="1">⇩ Export (elemzéshez)</button></p>`);
   o.push(`<h2>Papírkereskedés – HYPE</h2>`);
   o.push(`<div class="ptabs"><button data-view="naplo" class="${J ? "on" : ""}">Élő napló</button><button data-view="ujra" class="${!J ? "on" : ""}">Újraszámolt (szabályteszt)</button></div>`);
-  o.push(`<p class="muted">Szabályverzió: v${RULES.v} (${RULES.date}). ${J ? `Napló indult: ${fmtT.format(jv.start)} – ami bekerült, nem számolódik újra.` : `A mostani szabályokkal újrajátszva ${sim.days[0] ? fmtT.format(sim.days[0].T) : "–"} óta (szebb, mint a valóság).`}</p>`);
+  o.push(`<p class="muted">Szabályverzió: v${RULES.v} (${RULES.date}). ${J ? `Napló indult: ${fmtT.format(jv.start)} (előtte a v1 szabályokkal újraszámolt múlt a kiinduló) – ami bekerült, nem számolódik újra.` : `A mostani szabályokkal újrajátszva ${sim.days[0] ? fmtT.format(sim.days[0].T) : "–"} óta (szebb, mint a valóság).`}</p>`);
   if (haltOn) o.push(`<p style="background:#FFEBEE;color:#B71C1C;padding:6px 10px;border-radius:6px"><b>VÉSZFÉK:</b> a fiók saját tőkéje 20 %-nál többet esett – új belépő nincs, csak a meglévők kezelése.</p>`);
   // a rács és a silver bullet külön: így a rácsos kereskedés statisztikája tiszta marad
   o.push(`<div class="ptabs"><button data-mode="all" class="${all ? "on" : ""}">Összesen (rács + SB)</button><button data-mode="grid" class="${mode === "grid" ? "on" : ""}">Rács (cross)</button><button data-mode="sb" class="${sb ? "on" : ""}">Silver bullet (SB számla)</button></div>`);

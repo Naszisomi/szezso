@@ -1,6 +1,7 @@
 // Élő napló: a papírkereskedés „befagyasztott” változata. Ami egyszer bekerült, az utólag nem számolódik újra –
 // így ez mutatja a rendszer valódi teljesítményét (a „Újraszámolt” nézet a mostani szabályokkal az egész múltat
-// újrajátssza, ezért az mindig szebb). Indításkor a mostani újraszámolt állapot (egyenlegek, nyitott pozíciók) a kiinduló.
+// újrajátssza). Indításkor a v1 szabályokkal újraszámolt teljes múlt (minden teljesülés és zárás) kerül be kiindulásként,
+// onnantól csak a lezárt gyertyák új eseményei íródnak hozzá.
 // Csak a lezárt gyertyák eseményei kerülnek be; minden esemény a szabályverzióval együtt. A tabletre mentődik.
 const LS = k => "szezso.journal." + k;
 const Q = 900000;
@@ -18,24 +19,19 @@ export function updateJournal(sim, bal, rules) {
   if (sim.last) cut = Math.min(cut, sim.last.t);
   if (sim.sb && sim.sb.last) cut = Math.min(cut, Math.floor(sim.sb.last.t / Q) * Q);
   let j = loadJournal(sim.key), dirty = false;
+  if (j && j.v !== 2) j = null;                                           // a régi (nulláról induló) napló helyett újraindítás
   if (!j) {
-    const startBal = { ...bal };
-    for (const e of [...sim.events, ...(sim.sb ? sim.sb.events : [])]) if (e.t < cut) startBal[e.acc] = (startBal[e.acc] ?? 0) + e.pnl;
-    const pos = [];
-    for (const t of all) {
-      const fs = t.fills.filter(f => f.t < cut), xs = t.exits.filter(x => x.t < cut);
-      const qf = fs.reduce((s, f) => s + f.qty, 0), q = qf - xs.reduce((s, x) => s + x.qty, 0);
-      if (q > 1e-9) pos.push({ k: keyOf(t), acc: t.acc, dir: t.dir, w: t.window || null, qty: q, avg: fs.reduce((s, f) => s + f.qty * f.p, 0) / qf, t0: fs[0].t });
-    }
-    j = { v: 1, key: sim.key, start: cut, lastT: cut, rules: [{ ...rules, from: cut }], startBal, pos, ev: [] };
+    // indítás: a v1 szabályokkal újraszámolt múlt minden eseménye bekerül (ez a kiinduló), az egyenlegek a beállítottak
+    j = { v: 2, key: sim.key, start: cut, lastT: 0, rules: [{ ...rules, from: cut }], startBal: { ...bal }, pos: [], ev: [] };
     dirty = true;
   }
   if (!j.rules.some(r => r.v === rules.v)) { j.rules.push({ ...rules, from: j.lastT }); dirty = true; }
   if (cut > j.lastT) {
+    const from = j.lastT;
     for (const t of all) {
       const k = keyOf(t), w = t.window || null;
-      for (const f of t.fills) if (f.t >= j.lastT && f.t < cut) j.ev.push({ t: f.t, k, acc: t.acc, dir: t.dir, w, kind: "fill", p: f.p, qty: f.qty, fee: f.fee, why: f.why, rv: rules.v });
-      for (const x of t.exits) if (x.t >= j.lastT && x.t < cut) j.ev.push({ t: x.t, k, acc: t.acc, dir: t.dir, w, kind: "exit", p: x.p, qty: x.qty, fee: x.fee, pnl: x.pnl, why: x.why, rv: rules.v });
+      for (const f of t.fills) if (f.t >= from && f.t < cut) j.ev.push({ t: f.t, k, acc: t.acc, dir: t.dir, w, kind: "fill", p: f.p, qty: f.qty, fee: f.fee, why: f.why, rv: rules.v });
+      for (const x of t.exits) if (x.t >= from && x.t < cut) j.ev.push({ t: x.t, k, acc: t.acc, dir: t.dir, w, kind: "exit", p: x.p, qty: x.qty, fee: x.fee, pnl: x.pnl, why: x.why, rv: rules.v });
     }
     j.ev.sort((a, b) => a.t - b.t);
     j.lastT = cut; dirty = true;
