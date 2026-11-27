@@ -1,6 +1,7 @@
 // Saját rajzok a charton (1. kör): trendvonal, vízszintes vonal, vízszintes sugár, téglalap, nyíl, törött vonal (nyíllal).
 // Rajzolás a TradingView mobil módszerével: eszközválasztás után célkereszt jelenik meg; az ujj húzása a célkeresztet
-// mozgatja (eltolva, hogy látszódjon), koppintás rakja le a pontot. A törött vonalat a „Kész” zárja, a „Mégse” elveti.
+// mozgatja (eltolva, hogy látszódjon), koppintás rakja le a pontot. A törött vonalat a „Kész” vagy egy dupla koppintás
+// (koppintás az utolsó pontra) zárja, a „Mégse” elveti.
 // Kijelölés koppintással; a fogópontok és az egész rajz húzható; szín, vastagság, törlés, visszavonás, mágnes (OHLC).
 // A rajzok termékenként tárolódnak a tableten, minden idősíkon és számlafülön látszanak.
 import { getPref, setPref } from "./store.js";
@@ -182,7 +183,13 @@ export class DrawController {
       this.draft = { id: "d" + (++seq), type: tool, color: drawState.color, width: drawState.width, pts: [pt] };
       if (NPTS[tool] === 1) { this.finish(); return; }
       this.draft.pts.push({ ...pt });                       // előnézet: a következő pont a célkeresztet követi
-    } else if (tool === "path") { this.draft.pts[this.draft.pts.length - 1] = pt; this.draft.pts.push({ ...pt }); }
+    } else if (tool === "path") {
+      // dupla koppintás (vagy koppintás az utolsó pontra) lezárja a törött vonalat – mint a TradingView-on
+      // (a célkereszt csak húzásra mozdul: két koppintás húzás nélkül = ugyanaz a pont)
+      const P = this.draft.pts, prev = P[P.length - 2];
+      if (P.length >= 3 && prev && prev.t === pt.t && Math.abs(prev.p - pt.p) <= Math.abs(pt.p) * 0.0008) { this.finish(); return; }
+      P[P.length - 1] = pt; P.push({ ...pt });
+    }
     else { this.draft.pts[1] = pt; this.finish(); return; }
     this.showCross();
   }
