@@ -44,8 +44,8 @@ export function renderPaper(el, plans, key, rerender) {
   o.push(`<div class="ptabs"><button data-mode="all" class="${all ? "on" : ""}">Összesen (rács + SB)</button><button data-mode="grid" class="${mode === "grid" ? "on" : ""}">Rács (cross)</button><button data-mode="sb" class="${sb && !ext ? "on" : ""}">Silver bullet (SB számla)</button><button data-mode="ext" class="${ext ? "on" : ""}">Extrém izo (SB számla)</button></div>`);
   if (ext) {
     const x = sbs.extNow, v = n => n == null || !isFinite(n) ? "–" : Math.round(n);
-    const near = x && ((x.r15 < 30 && x.r1h < 30) || (x.r15 > 70 && x.r1h > 70));
-    o.push(`<p class="muted">Jel: long, ha a 15m és az 1h RSI < 20 és a 15m J < 0; short, ha RSI > 80 és J > 100 (Ázsiában is). Izolált, a margin ≤ az SB tőke 10 %-a (+20 $ védelem), 2 DCA, zárás a vastag vonalnál vagy az RSI/KDJ megállításakor.</p>`);
+    const near = x && ((x.r15 < 30 && x.r1h < 40) || (x.r15 > 70 && x.r1h > 60));
+    o.push(`<p class="muted">Jel: long, ha a 15m RSI < 20, az 1h RSI < 30 és a 15m J < 0; short, ha a 15m RSI > 80, az 1h RSI > 70 és a J > 100 (Ázsiában is). Izolált, a margin ≤ az SB tőke 10 %-a (+20 $ védelem), 2 DCA, zárás a vastag vonalnál vagy az RSI/KDJ megállításakor.</p>`);
     o.push(`<p>Most (utolsó lezárt gyertyák): 15m RSI <b>${v(x && x.r15)}</b> · 1h RSI <b>${v(x && x.r1h)}</b> · 15m J <b>${v(x && x.j15)}</b>${near ? " – <b>közel az extrém zónához</b>" : ""}</p>`);
   }
   if (!sb && !all) o.push(`<div class="ptabs">${["Összes", ...ACC_NAMES].map(a => `<button data-acc="${a}" class="${a === acc ? "on" : ""}">${a}</button>`).join("")}</div>`);

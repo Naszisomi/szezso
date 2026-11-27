@@ -92,7 +92,7 @@ export function simulateSB(bars, cfg) {
   };
 
   // ── Extrém visszafordulás (izolált, az SB számlán) ──
-  // Jel a 15m gyertya zárásakor: 15m ÉS 1h RSI < 20 és 15m J < 0 → long; RSI > 80 és J > 100 → short (Ázsiában is).
+  // Jel a 15m gyertya zárásakor: 15m RSI < 20, 1h RSI < 30 és 15m J < 0 → long; 15m RSI > 80, 1h RSI > 70 és J > 100 → short (Ázsiában is).
   // Belépő: friss 9–10/10-es golden pocket közeli szélén, ha 1 ATR-en belül van; különben piaci áron a záráskor.
   // 2 DCA a vastag vonalakon; méret: a margin (izolált, a 20 $-os további mozgást is kibírja, mindhárom láb kitelve)
   // legfeljebb az SB tőke 10 %-a. Zárás egyben, ami előbb jön: a legközelebbi vastag egyezésvonal az átlagártól ≥ 1 $-ra,
@@ -134,7 +134,7 @@ export function simulateSB(bars, cfg) {
     if (k15 == null || halted) return;
     const h = Math.floor((b.t + 300000) / 3600000) * 3600000 - 3600000, k1 = i1h.get(h);      // az utolsó lezárt 1h gyertya
     if (k1 == null) return;
-    const dir = r15[k15] < 20 && r1h[k1] < 20 && J15[k15] < 0 ? 1 : r15[k15] > 80 && r1h[k1] > 80 && J15[k15] > 100 ? -1 : 0;
+    const dir = r15[k15] < 20 && r1h[k1] < 30 && J15[k15] < 0 ? 1 : r15[k15] > 80 && r1h[k1] > 70 && J15[k15] > 100 ? -1 : 0;   // C változat (v2.1)
     if (!dir || liveExt().some(t => t.dir === dir) || b.t < extCool[dir]) return;
     const atr = at15[k15], c = b.c, gpz = cfg.gpz ? cfg.gpz(b.t) : [];
     // friss 9–10/10-es golden pocket a mozgás irányában, 1 ATR-en belül (long: alatta, short: fölötte)
