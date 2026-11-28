@@ -11,6 +11,7 @@ import { computeGaps, atr } from "./engine/gaps.js";
 import { rsi } from "./engine/osc.js";
 import { simulate, ACC_NAMES } from "./grid.js";
 import { simulateSB } from "./sb.js";
+import { updateJournal } from "./journal.js";
 import { saveCandles, getPref } from "./store.js";
 import { arrowPlans } from "./drawings.js";
 export { ACC_NAMES };
@@ -210,7 +211,9 @@ export class PlanManager {
         day.rev = true; changed = true;
       }
       if (changed) this.save(key, st);
-      this.runSim(key);
+      const sim = this.runSim(key);
+      // az élő napló minden frissítéskor a friss szimulációból bővül (nem csak a Papír fül megnyitásakor)
+      if (sim && sim.hype) try { updateJournal(sim, this.balances(), RULES); } catch (e) { console.warn("[szezso] napló:", e); }
       d.info = await this.info(key);
       d.info15 = await this.info(key, d.bars15, 900);
       this.onChange(key);
