@@ -23,7 +23,7 @@ export const SWAN = 50;
 export const DEFAULT_BAL = 102000 / 6;   // 6 OKX-számla: Fő, Al1–Al4 (rács) és Al5 = SB (silver bullet + extrém izo) – 17 000 $ mindegyik
 export const ALL_ACC = [...ACC_NAMES, "SB"];
 // szabályverzió: minden szabályváltozásnál nő; az élő napló eseményei ezt is rögzítik
-export const RULES = { v: 2.5, date: "2026-11-28", reset: 5,
+export const RULES = { v: 2.6, date: "2026-11-28", reset: 6,
   note: "végleges felosztás: 6 OKX-számla, 17 000 $ mindegyik – Fő, Al1–Al4 rács (cross + izo kör, 3 DCA), Al5 = SB (silver bullet + extrém izo); a napló ezzel újraszámolva",
   changes: [
     { v: 1, note: "napló-indító: rács + SB (London/TNY/NY AM/NY PM), szűrők, C2, vészfék 20 %, tick-átütés, csúszás" },
@@ -35,7 +35,8 @@ export const RULES = { v: 2.5, date: "2026-11-28", reset: 5,
     { v: 2.2, note: "az egyezésvonalakba (DWM) a heti és a havi zárás is bekerül; az ICT-ablakok hétvégén is futnak" },
     { v: 2.3, note: "rács: a napközben felszabadult számla azonnal a lánc végére áll; a swing-maradékot tartó számla nem kap új rács-kereskedést (a várakozó lánc a többi számlával újraépül)" },
     { v: 2.4, note: "silver bullet: DCA legalább 1 × 15m ATR-re, csak vastag (n ≥ 6) vonalon; DCA után a TP átlagár + ½ ATR; lábak 1/1/1/2" },
-    { v: 2.5, note: "új: RSI kereskedés (F változat) az Al4-en – 15m RSI 30/70 + J 15/85, előző 4h alj/tető áttörve, 4h RSI 35/65; cél az előző 1h; DCA 4h jel és napi alj/tető; végső kilépés 5 $-ral a 2. DCA után. A napló a v2.4-es SB-vel és az RSI-vel újraszámolva" }] };
+    { v: 2.5, note: "új: RSI kereskedés (F változat) az Al4-en – 15m RSI 30/70 + J 15/85, előző 4h alj/tető áttörve, 4h RSI 35/65; cél az előző 1h; DCA 4h jel és napi alj/tető; végső kilépés 5 $-ral a 2. DCA után. A napló a v2.4-es SB-vel és az RSI-vel újraszámolva" },
+    { v: 2.6, note: "SB javítás: a belépő 0,1 ATR-rel a vonal előtt; ha az ablakban nincs 15m FVG, az ablak után a nyitás FVG-je a jel. A napló ezzel újraszámolva" }] };
 // görbe [[t, érték]] → függvény: az utolsó t-ig ismert érték
 function curveAt(c) { return t => { let lo = 0, hi = c.length - 1, r = 0; while (lo <= hi) { const m = (lo + hi) >> 1; if (c[m][0] <= t) { r = c[m][1]; lo = m + 1; } else hi = m - 1; } return r; }; }
 

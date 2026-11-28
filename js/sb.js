@@ -226,6 +226,11 @@ export function simulateSB(bars, cfg) {
 
     // megbízások: az FVG után mindkét irányba, a cél (az ablak nyitóvonala) két oldalán
     const act = asia || halted ? null : win || lastWin;      // az ablak után is keres, amíg a következő ablak el nem indul
+    // v2.6: ha az ablakban nem derült ki 15m FVG, az ablak vége után a cél (a nyitás FVG-je) maga a jel
+    if (act && !act.fvg && act === lastWin) {
+      const L0 = lv[TARGET[act.idx]];
+      if (L0 && L0.fvg && L0.t >= act.t - 12 * 3600000) { act.fvg = L0.fvg; act.log.push(`nem volt 15m FVG az ablakban → a ${TARGET[act.idx]} FVG a jel (${L0.fvg.map(f3).join(" – ")})`); }
+    }
     if (!act || !act.fvg || (act.placed[1] && act.placed[-1])) continue;
     const L = lv[TARGET[act.idx]];
     if (!L || L.t < act.t - 12 * 3600000 || !L.fvg) { if (!act.noTgt) { act.noTgt = true; act.log.push(`a cél (${TARGET[act.idx]} FVG) még nem ismert – várakozik`); } continue; }
@@ -251,7 +256,8 @@ export function simulateSB(bars, cfg) {
         .sort((x, y) => (y.n - x.n) || Math.abs(x.p - b.c) - Math.abs(y.p - b.c))[0];
       if (!c) { if (!act.miss[dir]) { act.miss[dir] = true; act.log.push(`${side(dir)}: nincs vastag vonal az FVG ${dir > 0 ? "alatt" : "fölött"} 2,5 ATR-en belül (ár ${f3(b.c)}) – keres tovább`); } continue; }
       // DCA-k (v2.4): a belépőn túli következő vastag (n ≥ 6) vonalakon, egymástól legalább 1 × 15m ATR-re; ha nincs, 1 ATR-es lépéssel (a 2 napos valódi adaton ez volt a legjobb arány)
-      const e = c.p, legs = [{ p: e, why: `entry (EGYEZÉS ${c.n})`, units: SB_UNITS[0] }];
+      // v2.6: a belépő 0,1 ATR-rel a vonal előtt (az ár gyakran pont a vonal előtt fordul)
+      const e = c.p + dir * 0.1 * atr[i], legs = [{ p: e, why: `entry (EGYEZÉS ${c.n}, 0,1 ATR-rel előtte)`, units: SB_UNITS[0] }];
       const beyond = lines.filter(g => g.n >= 6 && -dir * (g.p - e) > 0).sort((x, y) => Math.abs(x.p - e) - Math.abs(y.p - e));
       for (let k = 1; k < 4; k++) {
         const prev = legs[k - 1].p, g = beyond.find(x => -dir * (x.p - prev) >= 1 * atr[i]);
