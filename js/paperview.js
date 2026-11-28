@@ -18,16 +18,19 @@ export function renderPaper(el, plans, key, rerender) {
   const ext = mode === "ext", sb = mode === "sb" || ext, all = mode === "all", sbs = sim.sb || { trades: [], events: [] };
   // élő napló (befagyasztott) vagy újraszámolt (a mostani szabályokkal az egész múlt)
   const jv = journalView(updateJournal(sim, bal, RULES), sim), J = view === "naplo" && !!jv;
-  const gT = J ? jv.trades.filter(t => t.acc !== "SB") : sim.trades, sT = J ? jv.trades.filter(t => t.acc === "SB") : sbs.trades;
-  const gE = J ? jv.events.filter(e => e.acc !== "SB") : sim.events, sE = J ? jv.events.filter(e => e.acc === "SB") : sbs.events;
+  const rss = sim.rsi || { trades: [], events: [] }, rsiM = mode === "rsi";
+  const isRsi = t => t.kind === "rsi" || t.window === "RSI", rsiE = e => /^RSI /.test(e.why || "");
+  const gT = J ? jv.trades.filter(t => t.acc !== "SB" && !isRsi(t)) : sim.trades, sT = J ? jv.trades.filter(t => t.acc === "SB") : sbs.trades;
+  const gE = J ? jv.events.filter(e => e.acc !== "SB" && !rsiE(e)) : sim.events, sE = J ? jv.events.filter(e => e.acc === "SB") : sbs.events;
+  const rT = J ? jv.trades.filter(isRsi) : rss.trades, rE = J ? jv.events.filter(rsiE) : rss.events;
   const B = J ? { ...bal, ...jv.startBal } : bal;
   const isExt = t => !!t.ext || t.window === "Extrém izo";
   const extE = e => /^Extrém izo/.test(e.why || "");
-  const src = ext ? { trades: sT.filter(isExt), events: sE.filter(extE) } : sb ? { trades: sT.filter(t => !isExt(t)), events: sE.filter(e => !extE(e)) } : all ? { trades: [...gT, ...sT], events: [...gE, ...sE].sort((a, b) => a.t - b.t) } : { trades: gT, events: gE };
-  const mine = t => sb || all || acc === "Összes" || t.acc === acc;
-  const trades = src.trades.filter(mine), events = src.events.filter(e => sb || all || acc === "Összes" || e.acc === acc);
-  const ordTrades = (ext ? sbs.trades.filter(isExt) : sb ? sbs.trades.filter(t => !isExt(t)) : all ? [...sim.trades, ...sbs.trades] : sim.trades).filter(mine);     // élő megbízások: mindig a mostani szabályokból
-  const start = sb ? B.SB : all ? ALL_ACC.reduce((s, a) => s + B[a], 0) : acc === "Összes" ? ACC_NAMES.reduce((s, a) => s + B[a], 0) : B[acc];
+  const src = rsiM ? { trades: rT, events: rE } : ext ? { trades: sT.filter(isExt), events: sE.filter(extE) } : sb ? { trades: sT.filter(t => !isExt(t)), events: sE.filter(e => !extE(e)) } : all ? { trades: [...gT, ...rT, ...sT], events: [...gE, ...rE, ...sE].sort((a, b) => a.t - b.t) } : { trades: gT, events: gE };
+  const mine = t => sb || all || rsiM || acc === "Összes" || t.acc === acc;
+  const trades = src.trades.filter(mine), events = src.events.filter(e => sb || all || rsiM || acc === "Összes" || e.acc === acc);
+  const ordTrades = (rsiM ? rss.trades : ext ? sbs.trades.filter(isExt) : sb ? sbs.trades.filter(t => !isExt(t)) : all ? [...sim.trades, ...rss.trades, ...sbs.trades] : sim.trades).filter(mine);     // élő megbízások: mindig a mostani szabályokból
+  const start = rsiM ? B[ACC_NAMES[ACC_NAMES.length - 1]] : sb ? B.SB : all ? ALL_ACC.reduce((s, a) => s + B[a], 0) : acc === "Összes" ? ACC_NAMES.reduce((s, a) => s + B[a], 0) : B[acc];
   const haltOn = [sim.halts, sbs.halts].some(h => h && h.length && h[h.length - 1].on);
   const realized = events.reduce((s, e) => s + e.pnl, 0);
   const open = trades.filter(t => OPEN.includes(t.state) && t.open > 0), last = sim.last ? sim.last.c : NaN;
@@ -38,10 +41,11 @@ export function renderPaper(el, plans, key, rerender) {
   o.push(`<p style="float:right"><button data-export="1">⇩ Export (elemzéshez)</button> <button data-export-data="1" title="A gyertyák, tervek és beállítások – ezzel a valódi napokon tesztelhetők a szabályok">⇩ Adat export (teszthez)</button></p>`);
   o.push(`<h2>Papírkereskedés – HYPE</h2>`);
   o.push(`<div class="ptabs"><button data-view="naplo" class="${J ? "on" : ""}">Élő napló</button><button data-view="ujra" class="${!J ? "on" : ""}">Újraszámolt (szabályteszt)</button></div>`);
-  o.push(`<p class="muted">Szabályverzió: v${RULES.v} (${RULES.date}). ${J ? `Napló indult: ${fmtT.format(jv.start)} (előtte a v1 szabályokkal újraszámolt múlt a kiinduló) – ami bekerült, nem számolódik újra.` : `A mostani szabályokkal újrajátszva ${sim.days[0] ? fmtT.format(sim.days[0].T) : "–"} óta (szebb, mint a valóság).`}</p>`);
+  o.push(`<p class="muted">Szabályverzió: v${RULES.v} (${RULES.date}). ${J ? `Napló indult: ${fmtT.format(jv.start)} (előtte a mostani szabályokkal újraszámolt múlt a kiinduló) – ami bekerült, nem számolódik újra.` : `A mostani szabályokkal újrajátszva ${sim.days[0] ? fmtT.format(sim.days[0].T) : "–"} óta (szebb, mint a valóság).`}</p>`);
   if (haltOn) o.push(`<p style="background:#FFEBEE;color:#B71C1C;padding:6px 10px;border-radius:6px"><b>VÉSZFÉK:</b> a fiók saját tőkéje 20 %-nál többet esett – új belépő nincs, csak a meglévők kezelése.</p>`);
   // a rács és a silver bullet külön: így a rácsos kereskedés statisztikája tiszta marad
-  o.push(`<div class="ptabs"><button data-mode="all" class="${all ? "on" : ""}">Összesen (rács + SB)</button><button data-mode="grid" class="${mode === "grid" ? "on" : ""}">Rács (cross)</button><button data-mode="sb" class="${sb && !ext ? "on" : ""}">Silver bullet (SB számla)</button><button data-mode="ext" class="${ext ? "on" : ""}">Extrém izo (SB számla)</button></div>`);
+  o.push(`<div class="ptabs"><button data-mode="all" class="${all ? "on" : ""}">Összesen (rács + SB)</button><button data-mode="grid" class="${mode === "grid" ? "on" : ""}">Rács (cross)</button><button data-mode="sb" class="${sb && !ext ? "on" : ""}">Silver bullet (SB számla)</button><button data-mode="ext" class="${ext ? "on" : ""}">Extrém izo (SB számla)</button><button data-mode="rsi" class="${rsiM ? "on" : ""}">RSI (${ACC_NAMES[ACC_NAMES.length - 1]})</button></div>`);
+  if (rsiM) o.push(`<p class="muted">RSI kereskedés (a legalsó rácsszámlán): long, ha a 15m RSI < 30, J < 15, az előző 4h alja áttörve és a 4h RSI < 35 (short fordítva: 70 / 85 / teteje / 65). Cél az előző 1h teteje → DCA után a közepe → az alja. DCA: 4h RSI/KDJ jel, majd az előző napi alj kivétele (1/1/2). Végső kilépés 5 $-ral a 2. DCA után.</p>`);
   if (ext) {
     const x = sbs.extNow, v = n => n == null || !isFinite(n) ? "–" : Math.round(n);
     const near = x && ((x.r15 < 30 && x.r1h < 40) || (x.r15 > 70 && x.r1h > 60));
@@ -61,7 +65,7 @@ export function renderPaper(el, plans, key, rerender) {
     o.push(table(["Számla", "Irány", "Menny.", "Átlagár", "Utolsó ár", "Nem real. PnL", "%", "Érték", "Margin", "Szerep", "SL+"], open.map(t => {
       const u = t.dir * (last - t.avg) * t.open;
       return [t.acc + (t.window ? " " + t.window : ""), side(t), t.open.toFixed(1), f(t.avg), f(last), `<span class="${cls(u)}">${usd(u)}</span>`, `${(u / mg(t) * 100).toFixed(2)}%`,
-        usd(t.avg * t.open, false), usd(mg(t), false) + (t.iso ? " (izo)" : ""), t.acc === "SB" ? (t.tp ? "TP " + f(t.tp.p) : "–") : roleTxt(t), t.stop != null ? f(t.stop) : "–"];
+        usd(t.avg * t.open, false), usd(mg(t), false) + (t.iso ? " (izo)" : ""), t.acc === "SB" || isRsi(t) ? (t.tp ? "TP " + f(t.tp.p) : "–") : roleTxt(t), t.stop != null ? f(t.stop) : "–"];
     }), "Nincs nyitott pozíció."));
   } else if (sub === "ord") {
     const rows = [];
@@ -92,7 +96,7 @@ export function renderPaper(el, plans, key, rerender) {
       ["Hozam a kezdőtőkére", `${(cum / start * 100).toFixed(2)}%`],
     ].map(([a, b]) => `<div class="card"><div class="muted">${a}</div><div class="v">${b}</div></div>`).join("") + `</div>`);
     // szakaszonként: melyik hozza a pénzt, melyik csak a kockázatot
-    const secOf = t => t.acc !== "SB" ? (t.window === "izo" ? "Rács izo" : "Rács") : (t.window || "SB").replace(/\s[\d:–]+$/, "");
+    const secOf = t => isRsi(t) ? "RSI" : t.acc !== "SB" ? (t.window === "izo" ? "Rács izo" : "Rács") : (t.window || "SB").replace(/\s[\d:–]+$/, "");
     const secs = [...new Set(done.map(secOf))];
     const hrs = x => x >= 24 ? (x / 24).toFixed(1) + " nap" : x.toFixed(1) + " óra";
     o.push(`<h3>Szakaszonként</h3>` + table(["Szakasz", "Db", "Nyerő %", "Átl. nyerő", "Átl. vesztő", "Profit factor", "Nettó", "Átl. idő bent"], secs.map(k => {
@@ -159,6 +163,7 @@ function exportAll(plans) {
       events: s ? s.events : [],
       journal: loadJournal(key),
       rules: RULES,
+      rsi: s && s.rsi ? { trades: s.rsi.trades.map(({ h1, ...t }) => t), events: s.rsi.events } : null,
       silverBullet: s && s.sb ? { trades: s.sb.trades.map(({ L, ...t }) => t), events: s.sb.events, windows: s.sb.windows } : null,
       last: s && s.last,
       drawings: (() => { try { return JSON.parse(localStorage.getItem("szezso.draw." + key)) || []; } catch { return []; } })(),

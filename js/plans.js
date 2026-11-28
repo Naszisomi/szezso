@@ -5,6 +5,7 @@
 // RSI-jel (70/30, választható idősíkon): nyereséges, nyitott pozíciónál „RSI ✋” a következő TP mellett.
 // A tervek a tabletre mentődnek (localStorage), a gyertyák az IndexedDB-be.
 import { makeFilter, to15 } from "./filters.js";
+import { simulateRSI } from "./rsitrade.js";
 import { nyToUtc, nyDate } from "./ind/milana.js";
 import { computeGaps, atr } from "./engine/gaps.js";
 import { rsi } from "./engine/osc.js";
@@ -22,7 +23,7 @@ export const SWAN = 50;
 export const DEFAULT_BAL = 102000 / 6;   // 6 OKX-számla: Fő, Al1–Al4 (rács) és Al5 = SB (silver bullet + extrém izo) – 17 000 $ mindegyik
 export const ALL_ACC = [...ACC_NAMES, "SB"];
 // szabályverzió: minden szabályváltozásnál nő; az élő napló eseményei ezt is rögzítik
-export const RULES = { v: 2.4, date: "2026-11-28", reset: 4,
+export const RULES = { v: 2.5, date: "2026-11-28", reset: 5,
   note: "végleges felosztás: 6 OKX-számla, 17 000 $ mindegyik – Fő, Al1–Al4 rács (cross + izo kör, 3 DCA), Al5 = SB (silver bullet + extrém izo); a napló ezzel újraszámolva",
   changes: [
     { v: 1, note: "napló-indító: rács + SB (London/TNY/NY AM/NY PM), szűrők, C2, vészfék 20 %, tick-átütés, csúszás" },
@@ -33,7 +34,8 @@ export const RULES = { v: 2.4, date: "2026-11-28", reset: 4,
     { v: 2.1, note: "extrém izo jel: 15m RSI 20/80 + 1h RSI 30/70 + 15m J (C változat, az 55 napos valódi adat alapján)" },
     { v: 2.2, note: "az egyezésvonalakba (DWM) a heti és a havi zárás is bekerül; az ICT-ablakok hétvégén is futnak" },
     { v: 2.3, note: "rács: a napközben felszabadult számla azonnal a lánc végére áll; a swing-maradékot tartó számla nem kap új rács-kereskedést (a várakozó lánc a többi számlával újraépül)" },
-    { v: 2.4, note: "silver bullet: DCA legalább 1 × 15m ATR-re, csak vastag (n ≥ 6) vonalon; DCA után a TP átlagár + ½ ATR; lábak 1/1/1/2" }] };
+    { v: 2.4, note: "silver bullet: DCA legalább 1 × 15m ATR-re, csak vastag (n ≥ 6) vonalon; DCA után a TP átlagár + ½ ATR; lábak 1/1/1/2" },
+    { v: 2.5, note: "új: RSI kereskedés (F változat) az Al4-en – 15m RSI 30/70 + J 15/85, előző 4h alj/tető áttörve, 4h RSI 35/65; cél az előző 1h; DCA 4h jel és napi alj/tető; végső kilépés 5 $-ral a 2. DCA után. A napló a v2.4-es SB-vel és az RSI-vel újraszámolva" }] };
 // görbe [[t, érték]] → függvény: az utolsó t-ig ismert érték
 function curveAt(c) { return t => { let lo = 0, hi = c.length - 1, r = 0; while (lo <= hi) { const m = (lo + hi) >> 1; if (c[m][0] <= t) { r = c[m][1]; lo = m + 1; } else hi = m - 1; } return r; }; }
 
@@ -253,6 +255,12 @@ export class PlanManager {
     const sim = simulate(days, bars, { ...gridCfg, extStart: hype ? bal.SB : 0, extEq: sb0 ? curveAt(sb0.curve) : null }, Date.now());
     sim.days = days; sim.key = key; sim.hype = hype; sim.rules = RULES;
     if (sbRun) sim.sb = sbRun(curveAt(sim.curve));
+    // RSI kereskedés: mindig a legalsó rácsnak fenntartott számlán (Al4); a vészfék itt is megállítja az új belépőt
+    if (hype && days[0]) {
+      const acc = ACC_NAMES[ACC_NAMES.length - 1], hs = sim.halts || [];
+      const halted = t => { let on = false; for (const h of hs) { if (h.t > t) break; on = h.on; } return on; };
+      sim.rsi = simulateRSI(d.bars15, d.bars, d.bars4, d.daily, { tick, sized: true, bal: bal[acc], swan: SWAN, acc, from: days[0].T, halted });
+    }
     this.sims.set(key, sim);
     return sim;
   }
@@ -276,7 +284,8 @@ export class PlanManager {
     const t2 = lastT + 6 * bs, f = p => +p.toPrecision(6);
     const rsiFlag = this.rsiFlag(key), last = s.last ? s.last.c : NaN;
     const sbT = acc === "SB" && s.sb ? s.sb.trades.filter(t => t.state === "vár" || t.state === "aktív" || (t.state === "lezárva" && t.closeT >= T0)) : [];
-    for (const t of [...s.trades, ...sbT]) {
+    const rsT = s.rsi ? s.rsi.trades.filter(t => t.acc === acc && (t.state === "aktív" || (t.state === "lezárva" && t.closeT >= T0))) : [];
+    for (const t of [...s.trades, ...sbT, ...rsT]) {
       if (t.acc !== acc) continue;
       const open = t.state === "aktív" || t.state === "részben" || t.state === "védett", today = t.day === T0;
       // nyitott, várakozó, és a ma lezárt kereskedések (szürkén); a lejárt megbízások nem

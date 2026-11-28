@@ -14,7 +14,7 @@ function save(j) { try { localStorage.setItem(LS(j.key), JSON.stringify(j)); } c
 
 export function updateJournal(sim, bal, rules) {
   if (!sim) return null;
-  const all = [...sim.trades, ...(sim.sb ? sim.sb.trades : [])];
+  const all = [...sim.trades, ...(sim.sb ? sim.sb.trades : []), ...(sim.rsi ? sim.rsi.trades : [])];
   let cut = Math.floor(Date.now() / Q) * Q;                              // csak a lezárt 15m gyertyák
   if (sim.last) cut = Math.min(cut, sim.last.t);
   if (sim.sb && sim.sb.last) cut = Math.min(cut, Math.floor(sim.sb.last.t / Q) * Q);
@@ -44,7 +44,7 @@ export function updateJournal(sim, bal, rules) {
 // a napló kereskedésekké és eseményekké alakítva (a papír-nézet ugyanúgy jeleníti meg, mint az újraszámoltat)
 export function journalView(j, sim) {
   if (!j) return null;
-  const simBy = new Map([...sim.trades, ...(sim.sb ? sim.sb.trades : [])].map(t => [keyOf(t), t]));
+  const simBy = new Map([...sim.trades, ...(sim.sb ? sim.sb.trades : []), ...(sim.rsi ? sim.rsi.trades : [])].map(t => [keyOf(t), t]));
   const byK = new Map(), events = [];
   const get = (k, x) => {
     if (!byK.has(k)) byK.set(k, { k, acc: x.acc, dir: x.dir, window: x.w, fills: [], exits: [], qty: 0, open: 0, cost: 0, avg: null, realized: 0, fees: 0, state: "aktív", closeT: null });
@@ -60,11 +60,11 @@ export function journalView(j, sim) {
     if (e.kind === "fill") {
       T.fills.push({ t: e.t, p: e.p, qty: e.qty, why: e.why, fee: e.fee });
       T.qty += e.qty; T.open += e.qty; T.cost += e.qty * e.p; T.avg = T.cost / T.qty; T.fees += e.fee;
-      events.push({ t: e.t, acc: e.acc, pnl: -e.fee, why: `${e.acc === "SB" ? "SB " : ""}${e.dir > 0 ? "long" : "short"} ${e.why} díj` });
+      events.push({ t: e.t, acc: e.acc, pnl: -e.fee, why: `${pfx(e)}${e.dir > 0 ? "long" : "short"} ${e.why} díj` });
     } else {
       T.exits.push({ t: e.t, p: e.p, qty: e.qty, why: e.why, pnl: e.pnl, fee: e.fee });
       T.open -= e.qty; T.realized += e.pnl; T.fees += e.fee;
-      events.push({ t: e.t, acc: e.acc, pnl: e.pnl - e.fee, why: `${e.acc === "SB" ? "SB " : ""}${e.dir > 0 ? "long" : "short"} ${e.why}` });
+      events.push({ t: e.t, acc: e.acc, pnl: e.pnl - e.fee, why: `${pfx(e)}${e.dir > 0 ? "long" : "short"} ${e.why}` });
       if (T.open <= 1e-9) { T.open = 0; T.state = "lezárva"; T.closeT = e.t; }
     }
   }
@@ -78,4 +78,5 @@ export function journalView(j, sim) {
   }
   return { trades: [...byK.values()], events, startBal: j.startBal, start: j.start, rules: j.rules };
 }
+const pfx = e => e.w === "Extrém izo" ? "Extrém izo " : e.w === "RSI" ? "RSI " : e.acc === "SB" ? "SB " : "";
 const OPENST = ["aktív", "részben", "védett"];
