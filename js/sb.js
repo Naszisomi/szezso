@@ -28,7 +28,7 @@ import { unitFor } from "./grid.js";
 import { makeFilter, to15 } from "./filters.js";
 import { rsi, kdj } from "./engine/osc.js";
 
-const MAKER = 0.0002, ASIA = 20 * 60, BE = 0.1;
+const MAKER = 0.0002, ASIA = 20 * 60, SB_UNITS = [1, 1, 1, 2];   // v2.4: az SB lábai 1/1/1/2 egység (a rácson marad az 1/1/2/4)
 const WINDOWS = [[180, 240], [510, 570], [600, 660], [840, 900]];                 // percek NY idő szerint
 const WNAME = ["London 09–10", "TNY 14:30–15:30", "NY AM 16–17", "NY PM 20–21"], TARGET = ["TLO", "TNY", "NYAM", "TPM"];
 const OPENS = [["TWO", 18 * 60, true], ["TDO", 0], ["TAO", 20 * 60 + 30], ["TLO", 2 * 60 + 30], ["TNY", 8 * 60 + 30], ["NYAM", 9 * 60 + 30], ["TPM", 14 * 60 + 30]];
@@ -212,7 +212,7 @@ export function simulateSB(bars, cfg) {
       let filled = false;
       while (t.filled < 4 && (d > 0 ? b.l <= t.legs[t.filled].p - tk : b.h >= t.legs[t.filled].p + tk)) { fill(t, t.filled, b); filled = true; }
       if (t.state !== "aktív") continue;
-      if (filled && t.filled >= 2) { setTp(t, t.avg + d * BE, `DCA után: átlagár + ${BE} $`, b); wlog(t, `${side(d)} DCA után a TP → ${f3(t.tp.p)} (átlagár ${f3(t.avg)} + ${BE} $)`); }
+      if (filled && t.filled >= 2) { const be = 0.5 * (t.atr || 0.4); setTp(t, t.avg + d * be, `DCA után: átlagár + ½ ATR (${f3(be)} $)`, b); wlog(t, `${side(d)} DCA után a TP → ${f3(t.tp.p)} (átlagár ${f3(t.avg)} + ½ ATR)`); }
       if (t.lastFill !== b.t && d * (t.tp.p - t.avg) > 0 && (d > 0 ? b.h >= t.tp.p + tk : b.l <= t.tp.p - tk)) {
         const px = t.tp.p, q = t.open, fee = q * px * MAKER, pnl = d * (px - t.avg) * q;
         t.open = 0; t.fees += fee; t.realized += pnl; t.exits.push({ t: b.t, p: px, qty: q, why: "TP", pnl, fee });
@@ -250,12 +250,12 @@ export function simulateSB(bars, cfg) {
       const c = lines.filter(g => -dir * (g.p - edge) >= 0.5 * atr[i] && -dir * (g.p - b.c) > 2 * tick && Math.abs(g.p - b.c) <= 2.5 * atr[i])
         .sort((x, y) => (y.n - x.n) || Math.abs(x.p - b.c) - Math.abs(y.p - b.c))[0];
       if (!c) { if (!act.miss[dir]) { act.miss[dir] = true; act.log.push(`${side(dir)}: nincs vastag vonal az FVG ${dir > 0 ? "alatt" : "fölött"} 2,5 ATR-en belül (ár ${f3(b.c)}) – keres tovább`); } continue; }
-      // DCA-k: a belépőn túli következő vastag vonalakon (egymástól ≥ 0,5 ATR), ha nincs, 1 ATR-es lépéssel
-      const e = c.p, legs = [{ p: e, why: `entry (EGYEZÉS ${c.n})`, units: UNITS[0] }];
-      const beyond = lines.filter(g => -dir * (g.p - e) > 0).sort((x, y) => Math.abs(x.p - e) - Math.abs(y.p - e));
+      // DCA-k (v2.4): a belépőn túli következő vastag (n ≥ 6) vonalakon, egymástól legalább 1 × 15m ATR-re; ha nincs, 1 ATR-es lépéssel (a 2 napos valódi adaton ez volt a legjobb arány)
+      const e = c.p, legs = [{ p: e, why: `entry (EGYEZÉS ${c.n})`, units: SB_UNITS[0] }];
+      const beyond = lines.filter(g => g.n >= 6 && -dir * (g.p - e) > 0).sort((x, y) => Math.abs(x.p - e) - Math.abs(y.p - e));
       for (let k = 1; k < 4; k++) {
-        const prev = legs[k - 1].p, g = beyond.find(x => -dir * (x.p - prev) >= 0.5 * atr[i]);
-        legs.push(g ? { p: g.p, why: `DCA${k} (EGYEZÉS ${g.n})`, units: UNITS[k] } : { p: prev - dir * atr[i], why: `DCA${k} (1 ATR)`, units: UNITS[k] });
+        const prev = legs[k - 1].p, g = beyond.find(x => -dir * (x.p - prev) >= 1 * atr[i]);
+        legs.push(g ? { p: g.p, why: `DCA${k} (EGYEZÉS ${g.n})`, units: SB_UNITS[k] } : { p: prev - dir * atr[i], why: `DCA${k} (1 ATR)`, units: SB_UNITS[k] });
       }
       const unit = cfg.sized ? unitFor((cfg.bal || 14571) + real, dir, legs, cfg.swan || 70) : 1;
       const t = { id: ++id, acc: "SB", dir, legs, unit, filled: 0, qty: 0, cost: 0, avg: null, open: 0, state: "vár", from: b.t, day: act.t, window: WNAME[act.idx],
